@@ -148,11 +148,21 @@ async function main(): Promise<void> {
       const projectIds = args.slice(1);
       if (!Number.isInteger(id)) usage();
       registry.restrictTo(id, projectIds);
+
+      // Report what was actually granted, not what was asked for. Unknown ids
+      // are dropped, and echoing the request would claim access that does not
+      // exist — the one place a confident wrong answer is worst.
+      const granted = registry.visibleTo(id).map((project) => project.id);
+      const dropped = projectIds.filter((wanted) => !granted.includes(wanted));
+
       console.log(
-        projectIds.length === 0
+        granted.length === 0
           ? `${id} now sees nothing`
-          : `${id} now sees only: ${projectIds.join(" ")}`,
+          : `${id} now sees only: ${granted.join(" ")}`,
       );
+      if (dropped.length > 0) {
+        console.log(`  ignored, not published: ${dropped.join(" ")}`);
+      }
       break;
     }
 
