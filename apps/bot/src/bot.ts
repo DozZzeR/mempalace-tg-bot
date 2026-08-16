@@ -215,6 +215,11 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     ctx.session.adminUsers = state.users;
     ctx.session.adminProjects = state.projects;
     ctx.session.adminRequests = state.requests;
+    // The gateway slides the session on every admin call, so take its word for
+    // the expiry rather than trusting the one captured at unlock.
+    if (state.sessionExpiresAt !== undefined) {
+      ctx.session.adminExpiresAt = state.sessionExpiresAt;
+    }
 
     const view = adminHomeView(state, ctx.session.adminExpiresAt ?? "");
     const options = {
@@ -264,8 +269,19 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
   });
 
   async function adminGuard(ctx: BotContext): Promise<boolean> {
-    if (ctx.session.adminExpiresAt === undefined) {
+    const expiresAt = ctx.session.adminExpiresAt;
+    if (expiresAt === undefined) {
       await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      return false;
+    }
+    // Checked against the clock, not merely for presence. Saying "the session
+    // expired" is a different piece of news from "you never opened one", and
+    // the second is what the admin used to be told after fifteen quiet minutes.
+    if (new Date(expiresAt).getTime() <= Date.now()) {
+      ctx.session.adminExpiresAt = undefined;
+      await ctx.reply(
+        "Сессия истекла. Откройте заново: /admin ваша фраза",
+      );
       return false;
     }
     return true;
@@ -634,23 +650,27 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
 
   bot.on("message:text", async (ctx) => {
     const userId = ctx.from.id;
-    const projectId = ctx.session.currentProjectId;
 
-    if (projectId === undefined) {
-      await ctx.reply("Сначала выберите проект — /start.");
-      return;
-    }
-
-    // An admin mid-publication: this message is the project title.
+    // Publishing is checked FIRST, before the "pick a project" guard, because
+    // it is not project-scoped: an admin naming a new project has not entered
+    // one. With the guard first, the title was always rejected and publishing
+    // from the bot could never work.
     const publishing = ctx.session.awaitingPublishWing;
     if (publishing !== undefined) {
       ctx.session.awaitingPublishWing = undefined;
       try {
         await deps.gateway.publishProject(userId, publishing, ctx.message.text);
-        await ctx.reply(`Опубликовано: ${ctx.message.text}`);
+        await ctx.reply(`✓ Опубликовано: ${ctx.message.text}`);
+        await showAdminHome(ctx, false);
       } catch (error) {
         await ctx.reply(excuse(error));
       }
+      return;
+    }
+
+    const projectId = ctx.session.currentProjectId;
+    if (projectId === undefined) {
+      await ctx.reply("Сначала выберите проект — /start.");
       return;
     }
 

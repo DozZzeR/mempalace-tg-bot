@@ -415,10 +415,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return reply.code(204).send();
   });
 
-  app.get("/admin/state", async (_request, reply) => {
+  app.get("/admin/state", async (request, reply) => {
     const admin = deps.admin;
     if (admin === undefined) return fail(reply, 404, NOT_FOUND);
 
+    const expiresAt = admin.expiresAt(request.caller?.id ?? 0);
     const body: AdminStateResponse = {
       requests: admin.pending().map((entry) => ({
         telegramUserId: entry.telegramUserId,
@@ -427,6 +428,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       })),
       users: admin.users(),
       projects: deps.registry.published(),
+      ...(expiresAt === undefined ? {} : { sessionExpiresAt: expiresAt }),
     };
     return reply.send(body);
   });

@@ -125,6 +125,12 @@ export type AdminStateResponse = {
   requests: AccessRequest[];
   users: AdminUser[];
   projects: Project[];
+  /**
+   * When the session currently runs out. Sent on every admin screen because
+   * the session slides — the bot's own idea of the expiry would otherwise go
+   * stale and it would announce a lockout that had not happened.
+   */
+  sessionExpiresAt?: string;
 };
 
 /**

@@ -188,7 +188,14 @@ export class AdminStore {
       .run(telegramUserId);
   }
 
-  /** True only for an admin whose session has not expired. */
+  /**
+   * True only for an admin whose session has not expired, and extends it.
+   *
+   * Sliding rather than fixed: the window is short so a forgotten session
+   * closes itself, but an admin working through a queue of requests should not
+   * be thrown out mid-task and made to retype the phrase. Idle time is what
+   * should end a session, not elapsed time.
+   */
   hasSession(telegramUserId: number): boolean {
     const caller = this.#registry.caller(telegramUserId);
     if (caller?.isAdmin !== true) return false;
@@ -202,7 +209,23 @@ export class AdminStore {
       this.closeSession(telegramUserId);
       return false;
     }
+
+    this.#extend(telegramUserId);
     return true;
+  }
+
+  /** When the current session runs out, or undefined if there is none. */
+  expiresAt(telegramUserId: number): string | undefined {
+    const row = this.#db
+      .prepare(`SELECT expires_at FROM admin_sessions WHERE telegram_user_id = ?`)
+      .get(telegramUserId) as { expires_at: string } | undefined;
+    return row?.expires_at;
+  }
+
+  #extend(telegramUserId: number): void {
+    this.#db
+      .prepare(`UPDATE admin_sessions SET expires_at = ? WHERE telegram_user_id = ?`)
+      .run(new Date(Date.now() + this.#ttlMs).toISOString(), telegramUserId);
   }
 }
 
