@@ -26,6 +26,21 @@ export default tseslint.config(
     },
   },
   {
+    // PM2 loads its ecosystem file with require(), so this one is CommonJS by
+    // necessity rather than by preference — the ESM rules do not apply to it.
+    files: ["**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: {
+        require: "readonly",
+        module: "writable",
+        process: "readonly",
+        __dirname: "readonly",
+      },
+    },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
     // The address computation itself, plus tests.
     //
     // Exempting tests does not weaken the guarantee: the rule exists to stop
