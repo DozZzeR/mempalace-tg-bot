@@ -81,6 +81,14 @@ type SessionData = {
    * including entering the phrase it asked for.
    */
   hintMessageId: number | undefined;
+  /**
+   * The message holding the last answer.
+   *
+   * Navigation edits the message its button came from, which is right for menus
+   * and for paging, but an answer is content — half a minute of model work and
+   * the passages it cites. Leaving it must not overwrite it.
+   */
+  answerMessageId: number | undefined;
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -101,6 +109,7 @@ function freshSession(): SessionData {
     awaitingTo: undefined,
     members: [],
     hintMessageId: undefined,
+    answerMessageId: undefined,
   };
 }
 
@@ -134,6 +143,16 @@ async function render(
   } catch (error) {
     if (!isNotModified(error)) throw error;
   }
+}
+
+/**
+ * Whether this callback arrived from the message holding an answer. Such a
+ * message must be left intact when navigating away — replacing it with a menu
+ * destroys the one thing in the exchange that was expensive to produce.
+ */
+function cameFromAnswer(ctx: BotContext): boolean {
+  const id = ctx.callbackQuery?.message?.message_id;
+  return id !== undefined && id === ctx.session.answerMessageId;
 }
 
 function isNotModified(error: unknown): boolean {
@@ -569,7 +588,9 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
   bot.callbackQuery("back", async (ctx) => {
     await ctx.answerCallbackQuery();
     try {
-      await showProjects(ctx, true);
+      // Leaving an answer sends a new message instead of editing: the answer
+      // stays in the chat to scroll back to.
+      await showProjects(ctx, !cameFromAnswer(ctx));
     } catch (error) {
       await ctx.reply(excuse(error));
     }
@@ -786,6 +807,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
         view.text,
         { parse_mode: "HTML", reply_markup: toKeyboard(view) },
       );
+      ctx.session.answerMessageId = thinking.message_id;
     } catch (error) {
       await ctx.api
         .editMessageText(thinking.chat.id, thinking.message_id, excuse(error))
