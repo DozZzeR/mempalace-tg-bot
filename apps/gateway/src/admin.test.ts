@@ -301,6 +301,21 @@ describe("choosing a user's projects", () => {
     expect(registry.visibleTo(ALICE).map((p) => p.id)).toEqual(["alpha", "beta"]);
   });
 
+  test("an unknown id is dropped rather than raising a database error", () => {
+    // The CLI calls restrictTo directly, so the filter has to live there and
+    // not at one call site. This used to surface as FOREIGN KEY constraint
+    // failed, half applied.
+    expect(() => registry.restrictTo(ALICE, ["alpha", "never-published"])).not.toThrow();
+    expect(registry.visibleTo(ALICE).map((p) => p.id)).toEqual(["alpha"]);
+  });
+
+  test("a project unpublished after being granted simply disappears", () => {
+    registry.restrictTo(ALICE, ["alpha", "beta"]);
+    admin.unpublish("beta");
+
+    expect(registry.visibleTo(ALICE).map((p) => p.id)).toEqual(["alpha"]);
+  });
+
   test("an unpublished project id cannot be granted", async () => {
     await app.inject({
       method: "PUT",

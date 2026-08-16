@@ -109,17 +109,34 @@ export class Registry {
    * restriction is a flag rather than "no rows means no access".
    */
   restrictTo(telegramUserId: number, projectIds: ProjectId[]): void {
-    this.db
-      .prepare(`UPDATE users SET restricted = 1 WHERE telegram_user_id = ?`)
-      .run(telegramUserId);
-    this.db
-      .prepare(`DELETE FROM user_projects WHERE telegram_user_id = ?`)
-      .run(telegramUserId);
-    const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO user_projects (telegram_user_id, project_id) VALUES (?, ?)`,
-    );
-    for (const projectId of projectIds) {
-      insert.run(telegramUserId, projectId);
+    // Filtering happens here rather than at a call site, because there are two
+    // doors into this room — the bot's admin screens and the CLI — and a guard
+    // on only one of them is no guard. An unknown id used to reach the insert
+    // and surface as a raw FOREIGN KEY error, half applied.
+    const published = new Set(this.published().map((project) => project.id));
+    const granted = projectIds.filter((id) => published.has(id));
+
+    // All or nothing: the old grants are cleared before the new ones land, so a
+    // failure partway through would leave the person seeing less than either
+    // the old set or the new one.
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(`UPDATE users SET restricted = 1 WHERE telegram_user_id = ?`)
+        .run(telegramUserId);
+      this.db
+        .prepare(`DELETE FROM user_projects WHERE telegram_user_id = ?`)
+        .run(telegramUserId);
+      const insert = this.db.prepare(
+        `INSERT OR IGNORE INTO user_projects (telegram_user_id, project_id) VALUES (?, ?)`,
+      );
+      for (const projectId of granted) {
+        insert.run(telegramUserId, projectId);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
   }
 

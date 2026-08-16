@@ -139,11 +139,8 @@ export class AdminStore {
       this.#registry.unrestrict(telegramUserId);
       return;
     }
-    const published = new Set(this.#registry.published().map((p) => p.id));
-    this.#registry.restrictTo(
-      telegramUserId,
-      projectIds.filter((id) => published.has(id)),
-    );
+    // restrictTo filters against the registry itself, so nothing is needed here.
+    this.#registry.restrictTo(telegramUserId, projectIds);
   }
 
   /**
