@@ -103,11 +103,15 @@ function loadModel(): ModelConfig | undefined {
     throw new ConfigError(`MODEL_TIMEOUT_MS is not valid: ${timeoutMs}`);
   }
 
+  // Defaults deliberately point outside the repository: Codex reads AGENTS.md
+  // and .agents/skills from its working directory, and our coding-agent
+  // instructions have no business in the context of the model that answers
+  // people.
   return {
     model: optional("MODEL_NAME", "gpt-5.5"),
     timeoutMs,
-    projectRoot: optional("MODEL_PROJECT_ROOT", "./data/model"),
-    tmpDirectory: optional("MODEL_TMP_DIR", "./data/model/tmp"),
+    projectRoot: optional("MODEL_PROJECT_ROOT", "/tmp/mempalace-bot-model"),
+    tmpDirectory: optional("MODEL_TMP_DIR", "/tmp/mempalace-bot-model/tmp"),
     maxConcurrency: Number(optional("MODEL_MAX_CONCURRENCY", "1")) || 1,
   };
 }

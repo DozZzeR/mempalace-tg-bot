@@ -21,6 +21,13 @@ import { ModelUnavailableError, type ModelPort, type ModelRequest } from "./port
 export type CodexOptions = {
   model: string;
   timeoutMs: number;
+  /**
+   * Where Codex runs. It MUST be outside this repository. Codex walks the
+   * working directory for AGENTS.md and `.agents/skills`, and inside the repo
+   * it loads our coding-agent instructions into the context of the model that
+   * answers people — sixteen thousand tokens of the wrong instructions, and a
+   * YAML parse error on a skill file for good measure.
+   */
   projectRoot: string;
   tmpDirectory: string;
   /** Serialises runs. Codex is heavy and this box hosts other services. */

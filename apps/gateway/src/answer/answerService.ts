@@ -34,11 +34,18 @@ export type AnswerOptions = {
   maxFragments?: number;
 };
 
+/** Reports a degradation. Silent fallback makes "off" and "broken" identical. */
+export type DegradeLogger = (stage: string, reason: string) => void;
+
 export class AnswerService {
   readonly #model: ModelPort | undefined;
+  readonly #onDegrade: DegradeLogger;
 
-  constructor(model?: ModelPort) {
+  constructor(model?: ModelPort, onDegrade?: DegradeLogger) {
     this.#model = model;
+    this.#onDegrade =
+      onDegrade ??
+      ((stage, reason) => console.warn(`model degraded at ${stage}: ${reason}`));
   }
 
   async answer(
@@ -70,6 +77,7 @@ export class AnswerService {
       fragments = await this.#gather(session, plan.queries, perQuery, maxFragments);
     } catch (error) {
       if (!(error instanceof ModelUnavailableError)) throw error;
+      this.#onDegrade("query planning", error.message);
       fragments = await session.search(question, maxFragments);
     }
 
@@ -92,11 +100,13 @@ export class AnswerService {
       // fragments are still returned, so the person sees the raw record and
       // judges for themselves — which beats prose that hedges.
       if (!draft.grounded || draft.answer.trim() === "") {
+        this.#onDegrade("synthesis", "model reported the material ungrounded");
         return { fragments, synthesized: false };
       }
       return { fragments, answer: draft.answer.trim(), synthesized: true };
     } catch (error) {
       if (!(error instanceof ModelUnavailableError)) throw error;
+      this.#onDegrade("synthesis", error.message);
       return { fragments, synthesized: false };
     }
   }
