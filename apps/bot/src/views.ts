@@ -247,28 +247,46 @@ function renderFragment(fragment: Fragment): string {
  * English fragments into the reader's language, and the reader has to be able
  * to check it — so the sources are always one tap away, never dropped.
  */
-export function answerPages(input: {
+/**
+ * Splits a result into the composed answer and the passages behind it.
+ *
+ * They are kept apart because they live in different messages. Paging used to
+ * overwrite the prose with the sources — destroying the half-minute of model
+ * work the person was reading — and the prose is the part they came for.
+ */
+export function answerParts(input: {
   answer?: string | undefined;
   fragments: Fragment[];
-}): string[] {
-  const fragmentPages = paginate(input.fragments);
-  if (input.answer === undefined || input.answer.trim() === "") {
-    return fragmentPages;
-  }
+}): { prose?: string; sources: string[] } {
+  const sources = paginate(input.fragments);
+  const answer = input.answer?.trim() ?? "";
+  if (answer === "") return { sources };
 
-  const lead =
-    `${escapeHtml(input.answer.trim())}\n\n` +
-    `<i>Собрано моделью из ${input.fragments.length} записей проекта. ` +
-    `Дальше — сами записи.</i>`;
-
-  return [lead, ...fragmentPages];
+  return {
+    prose:
+      `${escapeHtml(answer)}\n\n` +
+      `<i>Собрано моделью из ${input.fragments.length} записей проекта.</i>`,
+    sources,
+  };
 }
 
-export function answerView(
-  pages: string[],
-  pageIndex: number,
-  options: { synthesized: boolean },
-): View {
+/** The answer itself. Static: nothing rewrites this message. */
+export function proseView(prose: string, sourceCount: number): View {
+  return {
+    text: `<i>✨ Ответ собран моделью</i>\n\n${prose}`,
+    buttons: [
+      [{ text: `📄 Источники (${sourceCount})`, data: "sources" }],
+      [{ text: "← К списку проектов", data: "back" }],
+    ],
+  };
+}
+
+/**
+ * The passages themselves. No "composed by a model" marker here — this view
+ * shows records, and labelling them as model output would misrepresent them.
+ * The marker belongs on the prose, which now lives in its own message.
+ */
+export function sourcesView(pages: string[], pageIndex: number): View {
   if (pages.length === 0) {
     return {
       text:
@@ -279,12 +297,6 @@ export function answerView(
   }
 
   const index = Math.min(Math.max(pageIndex, 0), pages.length - 1);
-  // The synthesised marker belongs on the composed page only. Putting it on
-  // the source pages would label the record itself as model output.
-  const header =
-    options.synthesized && index === 0
-      ? "<i>✨ Ответ собран моделью</i>\n\n"
-      : "";
   const counter =
     pages.length > 1 ? `\n\n<i>Страница ${index + 1} из ${pages.length}</i>` : "";
 
@@ -297,5 +309,5 @@ export function answerView(
   if (navigation.length > 0) buttons.push(navigation);
   buttons.push([{ text: "← К списку проектов", data: "back" }]);
 
-  return { text: `${header}${pages[index] ?? ""}${counter}`, buttons };
+  return { text: `${pages[index] ?? ""}${counter}`, buttons };
 }

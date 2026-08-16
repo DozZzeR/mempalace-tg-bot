@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Fragment, Project } from "@mempalace-bot/contract";
 import {
-  answerView,
   escapeHtml,
   paginate,
   projectEnteredView,
@@ -126,51 +125,5 @@ describe("pagination", () => {
 
   test("returns no pages for no fragments", () => {
     expect(paginate([])).toEqual([]);
-  });
-});
-
-describe("answer view", () => {
-  test("says nothing was found rather than showing a blank message", () => {
-    const view = answerView([], 0, { synthesized: false });
-    expect(view.text).toContain("ничего не записано");
-  });
-
-  test("offers no navigation for a single page", () => {
-    const view = answerView(["only"], 0, { synthesized: false });
-    expect(view.buttons.flat().map((b) => b.data)).toEqual(["back"]);
-  });
-
-  test("offers forward only on the first page", () => {
-    const view = answerView(["a", "b", "c"], 0, { synthesized: false });
-    expect(view.buttons[0]).toEqual([{ text: "▶", data: "page:1" }]);
-  });
-
-  test("offers both directions in the middle", () => {
-    const view = answerView(["a", "b", "c"], 1, { synthesized: false });
-    expect(view.buttons[0]).toEqual([
-      { text: "◀", data: "page:0" },
-      { text: "▶", data: "page:2" },
-    ]);
-  });
-
-  test("offers back only on the last page", () => {
-    const view = answerView(["a", "b", "c"], 2, { synthesized: false });
-    expect(view.buttons[0]).toEqual([{ text: "◀", data: "page:1" }]);
-  });
-
-  test("clamps a page index that is out of range", () => {
-    const view = answerView(["a", "b"], 99, { synthesized: false });
-    expect(view.text).toContain("b");
-  });
-
-  test("labels a synthesized answer as synthesized", () => {
-    const view = answerView(["a"], 0, { synthesized: true });
-    // The invariant: the bot does not pass a model's words off as the record.
-    expect(view.text).toContain("собран моделью");
-  });
-
-  test("does not label a verbatim answer", () => {
-    const view = answerView(["a"], 0, { synthesized: false });
-    expect(view.text).not.toContain("собран моделью");
   });
 });

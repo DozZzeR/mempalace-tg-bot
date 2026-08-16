@@ -28,9 +28,10 @@ import {
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
   addresseeView,
-  answerPages,
-  answerView,
+  answerParts,
   noteKindView,
+  proseView,
+  sourcesView,
   notePromptView,
   noteSavedView,
   notesListView,
@@ -89,6 +90,8 @@ type SessionData = {
    * the passages it cites. Leaving it must not overwrite it.
    */
   answerMessageId: number | undefined;
+  /** The message showing the passages, which paging may rewrite. */
+  sourcesMessageId: number | undefined;
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -110,6 +113,7 @@ function freshSession(): SessionData {
     members: [],
     hintMessageId: undefined,
     answerMessageId: undefined,
+    sourcesMessageId: undefined,
   };
 }
 
@@ -151,6 +155,22 @@ async function render(
  * destroys the one thing in the exchange that was expensive to produce.
  */
 function cameFromAnswer(ctx: BotContext): boolean {
+  const id = ctx.callbackQuery?.message?.message_id;
+  return (
+    id !== undefined &&
+    (id === ctx.session.answerMessageId || id === ctx.session.sourcesMessageId)
+  );
+}
+
+/**
+ * Whether this callback belongs to the answer currently in session.
+ *
+ * Answers persist in the chat, so older ones keep working buttons — but the
+ * pages behind those buttons live in the session and belong to the newest
+ * answer. Acting on a stale button would show one answer's passages under
+ * another's text.
+ */
+function isCurrentAnswer(ctx: BotContext): boolean {
   const id = ctx.callbackQuery?.message?.message_id;
   return id !== undefined && id === ctx.session.answerMessageId;
 }
@@ -701,14 +721,33 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
   });
 
-  bot.callbackQuery(/^page:(\d+)$/, async (ctx) => {
+  bot.callbackQuery("sources", async (ctx) => {
+    if (!isCurrentAnswer(ctx)) {
+      await ctx.answerCallbackQuery("Это старый ответ — задайте вопрос заново");
+      return;
+    }
     await ctx.answerCallbackQuery();
 
-    const page = Number(ctx.match?.[1]);
-    const view = answerView(ctx.session.pages, page, {
-      synthesized: ctx.session.synthesized,
+    // A new message, never an edit: the answer above it must survive.
+    const sent = await ctx.reply(sourcesView(ctx.session.pages, 0).text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(sourcesView(ctx.session.pages, 0)),
     });
-    await render(ctx, view, true);
+    ctx.session.sourcesMessageId = sent.message_id;
+  });
+
+  bot.callbackQuery(/^page:(\d+)$/, async (ctx) => {
+    // Paging rewrites the message it came from, so it must be the sources
+    // message of the current answer. Session pages are per chat, not per
+    // message: without this check, tapping ▶ on an older answer would paint
+    // the newest answer's passages into it.
+    if (ctx.callbackQuery.message?.message_id !== ctx.session.sourcesMessageId) {
+      await ctx.answerCallbackQuery("Это старый ответ — задайте вопрос заново");
+      return;
+    }
+    await ctx.answerCallbackQuery();
+
+    await render(ctx, sourcesView(ctx.session.pages, Number(ctx.match?.[1])), true);
   });
 
   bot.on("message:text", async (ctx) => {
@@ -795,12 +834,17 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
         projectId,
         ctx.message.text,
       );
-      ctx.session.pages = answerPages(result);
+      const parts = answerParts(result);
+      ctx.session.pages = parts.sources;
       ctx.session.synthesized = result.synthesized;
 
-      const view = answerView(ctx.session.pages, 0, {
-        synthesized: result.synthesized,
-      });
+      // The prose lands in the "Ищу…" message and stays there. Sources arrive
+      // separately, on request, so nothing ever overwrites the answer.
+      const view =
+        parts.prose === undefined
+          ? sourcesView(parts.sources, 0)
+          : proseView(parts.prose, parts.sources.length);
+
       await ctx.api.editMessageText(
         thinking.chat.id,
         thinking.message_id,
@@ -808,6 +852,9 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
         { parse_mode: "HTML", reply_markup: toKeyboard(view) },
       );
       ctx.session.answerMessageId = thinking.message_id;
+      // When there is no prose, that message already holds the sources.
+      ctx.session.sourcesMessageId =
+        parts.prose === undefined ? thinking.message_id : undefined;
     } catch (error) {
       await ctx.api
         .editMessageText(thinking.chat.id, thinking.message_id, excuse(error))

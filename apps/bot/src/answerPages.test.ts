@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Fragment } from "@mempalace-bot/contract";
-import { answerPages, answerView } from "./views.ts";
+import { answerParts, proseView, sourcesView } from "./views.ts";
 
 function fragment(text: string): Fragment {
   return {
@@ -14,54 +14,90 @@ function fragment(text: string): Fragment {
   };
 }
 
-describe("composed answers", () => {
-  test("puts the prose first and keeps the sources after it", () => {
-    const pages = answerPages({
+describe("splitting an answer from its sources", () => {
+  test("keeps the prose apart from the passages", () => {
+    const parts = answerParts({
       answer: "Релизят по вторникам.",
       fragments: [fragment("ship on Tuesdays")],
     });
 
-    expect(pages.length).toBe(2);
-    expect(pages[0]).toContain("Релизят по вторникам.");
-    // The record is never dropped in favour of the prose: a composed answer is
-    // a translation, and the reader has to be able to check it.
-    expect(pages[1]).toContain("ship on Tuesdays");
+    // They live in different messages, so that paging through passages cannot
+    // overwrite the answer the person is reading.
+    expect(parts.prose).toContain("Релизят по вторникам.");
+    expect(parts.sources).toHaveLength(1);
+    expect(parts.sources[0]).toContain("ship on Tuesdays");
   });
 
   test("says how many records the prose was built from", () => {
-    const pages = answerPages({
+    const parts = answerParts({
       answer: "Ответ.",
       fragments: [fragment("a"), fragment("b")],
     });
-    expect(pages[0]).toContain("из 2 записей");
+    expect(parts.prose).toContain("из 2 записей");
   });
 
-  test("shows only fragments when no prose was composed", () => {
-    const pages = answerPages({ fragments: [fragment("raw")] });
-    expect(pages).toHaveLength(1);
-    expect(pages[0]).toContain("raw");
+  test("yields no prose when the model composed none", () => {
+    const parts = answerParts({ fragments: [fragment("raw")] });
+    expect(parts.prose).toBeUndefined();
+    expect(parts.sources).toHaveLength(1);
   });
 
   test("escapes model output before it reaches Telegram", () => {
-    const pages = answerPages({
+    const parts = answerParts({
       answer: "<script>alert(1)</script>",
       fragments: [fragment("x")],
     });
-    expect(pages[0]).not.toContain("<script>");
-    expect(pages[0]).toContain("&lt;script&gt;");
+    expect(parts.prose).not.toContain("<script>");
+    expect(parts.prose).toContain("&lt;script&gt;");
+  });
+});
+
+describe("the answer message", () => {
+  test("is marked as composed and offers the sources", () => {
+    const view = proseView("Ответ.", 3);
+
+    expect(view.text).toContain("собран моделью");
+    expect(view.buttons.flat().map((b) => b.data)).toContain("sources");
+    expect(view.buttons.flat().some((b) => b.text.includes("3"))).toBe(true);
   });
 
-  test("marks only the composed page as model output", () => {
-    const pages = answerPages({
-      answer: "Ответ.",
-      fragments: [fragment("source")],
-    });
+  test("carries no paging of its own", () => {
+    // Nothing rewrites this message; that is the point of it being separate.
+    const view = proseView("Ответ.", 2);
+    expect(view.buttons.flat().map((b) => b.data)).not.toContain("page:1");
+  });
+});
 
-    const first = answerView(pages, 0, { synthesized: true });
-    const second = answerView(pages, 1, { synthesized: true });
+describe("the sources message", () => {
+  test("does not claim the records were composed by a model", () => {
+    const view = sourcesView(["источник"], 0);
+    expect(view.text).not.toContain("собран моделью");
+  });
 
-    expect(first.text).toContain("собран моделью");
-    // Labelling the source page as model output would misrepresent the record.
-    expect(second.text).not.toContain("собран моделью");
+  test("pages when there is more than one", () => {
+    expect(sourcesView(["a", "b", "c"], 0).buttons[0]).toEqual([
+      { text: "▶", data: "page:1" },
+    ]);
+    expect(sourcesView(["a", "b", "c"], 1).buttons[0]).toEqual([
+      { text: "◀", data: "page:0" },
+      { text: "▶", data: "page:2" },
+    ]);
+    expect(sourcesView(["a", "b", "c"], 2).buttons[0]).toEqual([
+      { text: "◀", data: "page:1" },
+    ]);
+  });
+
+  test("offers no paging for a single page", () => {
+    expect(sourcesView(["only"], 0).buttons.flat().map((b) => b.data)).toEqual([
+      "back",
+    ]);
+  });
+
+  test("clamps a page index that is out of range", () => {
+    expect(sourcesView(["a", "b"], 99).text).toContain("b");
+  });
+
+  test("says plainly when nothing was found", () => {
+    expect(sourcesView([], 0).text).toContain("ничего не записано");
   });
 });
