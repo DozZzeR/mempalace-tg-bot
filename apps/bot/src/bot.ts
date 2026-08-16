@@ -1,4 +1,11 @@
-import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "grammy";
+import {
+  Bot,
+  GrammyError,
+  InlineKeyboard,
+  session,
+  type Context,
+  type SessionFlavor,
+} from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import type {
   AccessRequest,
@@ -90,6 +97,46 @@ function freshSession(): SessionData {
   };
 }
 
+/**
+ * Shows a view, editing the current message or sending a new one.
+ *
+ * The reason this is a function rather than a repeated pair of lines: Telegram
+ * rejects an edit whose result is identical to what is already on screen, with
+ * a 400. Tapping the same button twice does exactly that, and the rejection was
+ * surfacing to the person as a failure — the screen they asked for, followed by
+ * a message saying it could not be fetched. An edit that changes nothing has
+ * succeeded as far as anyone looking at the screen is concerned.
+ */
+async function render(
+  ctx: BotContext,
+  view: View,
+  edit: boolean,
+): Promise<void> {
+  const options = {
+    parse_mode: "HTML" as const,
+    reply_markup: toKeyboard(view),
+  };
+
+  if (!edit) {
+    await ctx.reply(view.text, options);
+    return;
+  }
+
+  try {
+    await ctx.editMessageText(view.text, options);
+  } catch (error) {
+    if (!isNotModified(error)) throw error;
+  }
+}
+
+function isNotModified(error: unknown): boolean {
+  return (
+    error instanceof GrammyError &&
+    error.error_code === 400 &&
+    error.description.includes("message is not modified")
+  );
+}
+
 function toKeyboard(view: View): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const row of view.buttons) {
@@ -162,16 +209,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
         ? {}
         : { pendingRequests: state.pendingRequests }),
     });
-    const options = {
-      parse_mode: "HTML" as const,
-      reply_markup: toKeyboard(view),
-    };
-
-    if (edit) {
-      await ctx.editMessageText(view.text, options);
-    } else {
-      await ctx.reply(view.text, options);
-    }
+    await render(ctx, view, edit);
   }
 
   function displayName(ctx: BotContext): string {
@@ -222,12 +260,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
 
     const view = adminHomeView(state, ctx.session.adminExpiresAt ?? "");
-    const options = {
-      parse_mode: "HTML" as const,
-      reply_markup: toKeyboard(view),
-    };
-    if (edit) await ctx.editMessageText(view.text, options);
-    else await ctx.reply(view.text, options);
+    await render(ctx, view, edit);
   }
 
   bot.command("admin", async (ctx) => {
@@ -315,7 +348,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
   bot.callbackQuery("adm:close", async (ctx) => {
     await ctx.answerCallbackQuery();
     ctx.session.adminExpiresAt = undefined;
-    await ctx.editMessageText("Сессия закрыта.");
+    await render(ctx, { text: "Сессия закрыта.", buttons: [] }, true);
   });
 
   bot.callbackQuery("adm:requests", async (ctx) => {
@@ -323,10 +356,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     if (!(await adminGuard(ctx))) return;
 
     const view = requestsView(ctx.session.adminRequests);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery(/^adm:(yes|no):(\d+)$/, async (ctx) => {
@@ -357,10 +387,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     if (!(await adminGuard(ctx))) return;
 
     const view = usersView(ctx.session.adminUsers);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   async function showUserProjects(ctx: BotContext, target: number): Promise<void> {
@@ -372,10 +399,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
       return;
     }
     const view = userProjectsView(user, ctx.session.adminProjects);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   }
 
   bot.callbackQuery(/^adm:user:(\d+)$/, async (ctx) => {
@@ -422,10 +446,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     ctx.session.adminWings = wings;
 
     const view = wingsView(wings);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   }
 
   bot.callbackQuery("adm:projects", async (ctx) => {
@@ -447,11 +468,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     await ctx.answerCallbackQuery();
 
     if (entry.published) {
-      const view = unpublishConfirmView(entry);
-      await ctx.editMessageText(view.text, {
-        parse_mode: "HTML",
-        reply_markup: toKeyboard(view),
-      });
+      await render(ctx, unpublishConfirmView(entry), true);
       return;
     }
 
@@ -459,10 +476,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     // defaulting to the wing name — people see this, agents wrote that.
     ctx.session.awaitingPublishWing = entry.wing;
     const view = publishPromptView(entry.wing);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery(/^adm:unpub:(.+)$/, async (ctx) => {
@@ -524,10 +538,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     ctx.session.awaitingNote = undefined;
 
     const view = projectEnteredView(project);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery("note", async (ctx) => {
@@ -543,10 +554,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
       .catch(() => []);
 
     const view = noteKindView(ctx.session.members.length > 0);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery(/^kind:(thought|plan)$/, async (ctx) => {
@@ -558,20 +566,14 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     ctx.session.awaitingNote = kind;
     ctx.session.awaitingTo = undefined;
     const view = notePromptView(kind);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery("kind:message", async (ctx) => {
     await ctx.answerCallbackQuery();
 
     const view = addresseeView(ctx.session.members);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery(/^to:(\d+)$/, async (ctx) => {
@@ -586,10 +588,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     ctx.session.awaitingNote = "message";
     ctx.session.awaitingTo = member.id;
     const view = notePromptView("message");
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery("cancel", async (ctx) => {
@@ -605,10 +604,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
 
     const view = projectEnteredView(project);
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.callbackQuery("notes", async (ctx) => {
@@ -626,10 +622,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
         await deps.gateway.notes(userId, projectId),
         userId,
       );
-      await ctx.editMessageText(view.text, {
-        parse_mode: "HTML",
-        reply_markup: toKeyboard(view),
-      });
+      await render(ctx, view, true);
     } catch (error) {
       await ctx.reply(excuse(error));
     }
@@ -642,10 +635,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     const view = answerView(ctx.session.pages, page, {
       synthesized: ctx.session.synthesized,
     });
-    await ctx.editMessageText(view.text, {
-      parse_mode: "HTML",
-      reply_markup: toKeyboard(view),
-    });
+    await render(ctx, view, true);
   });
 
   bot.on("message:text", async (ctx) => {
