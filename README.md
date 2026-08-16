@@ -4,8 +4,12 @@ A Telegram bot that gives people a window into MemPalace: one button per project
 you are allowed to see, ask about a topic, get what the palace has recorded, and
 leave your own note.
 
-**Agents start at [`.agents/WORKFLOW.md`](.agents/WORKFLOW.md).** Humans start at
-[`../docs/PROJECT.md`](../docs/PROJECT.md) — decisions, open questions, plan.
+**Agents start at [`.agents/WORKFLOW.md`](.agents/WORKFLOW.md).**
+
+The human-facing brief — decisions, open questions, the plan — lives in
+`docs/PROJECT.md` in the developer's working copy. It sits outside this
+repository by design, so it is not part of a clone or a deployment; on a server
+that path does not exist.
 
 ## The invariant
 
