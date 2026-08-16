@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bot": "node --env-file-if-exists=.env apps/bot/src/index.ts",
-    "gateway": "node --env-file-if-exists=.env apps/gateway/src/index.ts"
+    "gateway": "node --env-file-if-exists=.env apps/gateway/src/index.ts",
+    "gateway:dev": "node --env-file-if-exists=.env apps/gateway/src/dev/devServer.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

@@ -1,28 +1,24 @@
 /**
- * MemPalace Bot — entry point.
- *
- * M0: it starts, reads its configuration, and answers /start. Project buttons
- * arrive in M2, once the gateway can actually list projects. The bot holds no
- * access rules and never sees a wing name — it works with project identifiers
- * the gateway issues.
+ * MemPalace Bot — entry point. Composition root: the only place concrete
+ * implementations are chosen and wired.
  */
 
-import { Bot } from "grammy";
 import { loadConfig } from "./config.ts";
+import { HttpGatewayClient } from "./gateway/client.ts";
+import { buildBot } from "./bot.ts";
 
 function main(): void {
   const config = loadConfig();
-  const bot = new Bot(config.telegramToken);
 
-  bot.command("start", async (ctx) => {
-    await ctx.reply("Пока пусто. Кнопки проектов появятся на этапе M2.");
+  const gateway = new HttpGatewayClient({
+    baseUrl: config.gatewayUrl,
+    token: config.gatewayToken,
   });
 
-  bot.catch((err) => {
-    console.error("bot error:", err.message);
-  });
+  const bot = buildBot({ token: config.telegramToken, gateway });
 
-  console.log(`bot starting, gateway at ${config.gatewayUrl}`);
+  const label = config.botHandle === "" ? "bot" : config.botHandle;
+  console.log(`${label} starting, gateway at ${config.gatewayUrl}`);
   void bot.start();
 }
 
