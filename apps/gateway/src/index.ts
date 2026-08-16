@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   const db = openDatabase(config.statePath);
-  const registry = new Registry(db);
+  const registry = new Registry(db, config.adminIds);
   const palace =
     config.palace.kind === "stdio"
       ? stdioPalace(config.palace)
@@ -41,11 +41,15 @@ async function main(): Promise<void> {
           secret: config.admin.secret,
           ttlMs: config.admin.ttlMs,
         });
-  console.log(
-    admin === undefined
-      ? "admin surface off — set ADMIN_SECRET to enable"
-      : "admin surface on",
-  );
+  if (admin === undefined) {
+    console.log("admin surface off — set ADMIN_SECRET to enable");
+  } else if (config.adminIds.length === 0) {
+    // Worth saying loudly: with a secret but no ids, no one can ever open a
+    // session, and the failure looks like a wrong secret.
+    console.warn("admin surface on but ADMIN_IDS is empty — nobody can open a session");
+  } else {
+    console.log(`admin surface on — admins: ${config.adminIds.join(", ")}`);
+  }
 
   const app = buildServer({
     registry,

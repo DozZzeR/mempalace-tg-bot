@@ -30,6 +30,11 @@ export type GatewayConfig = {
    * ADMIN_SECRET to enable it.
    */
   admin: { secret: string; ttlMs: number } | undefined;
+  /**
+   * Who the admins are. Configuration, not state: nothing reachable at runtime
+   * can promote an account, and a fresh database still has an owner.
+   */
+  adminIds: number[];
 };
 
 class ConfigError extends Error {}
@@ -127,6 +132,25 @@ function loadModel(): ModelConfig | undefined {
   };
 }
 
+/** `ADMIN_IDS=331673208,42` — Telegram user ids, comma separated. */
+function loadAdminIds(): number[] {
+  const raw = optional("ADMIN_IDS", "");
+  const ids: number[] = [];
+
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed === "") continue;
+    const id = Number(trimmed);
+    // A typo here would silently produce a bot with no administrator, which
+    // only shows up much later as "the secret does not work".
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new ConfigError(`ADMIN_IDS contains a value that is not a Telegram id: ${trimmed}`);
+    }
+    ids.push(id);
+  }
+  return ids;
+}
+
 function loadAdmin(): { secret: string; ttlMs: number } | undefined {
   const secret = process.env["ADMIN_SECRET"];
   if (secret === undefined || secret === "") return undefined;
@@ -156,5 +180,6 @@ export function loadConfig(): GatewayConfig {
     palace: loadPalace(),
     model: loadModel(),
     admin: loadAdmin(),
+    adminIds: loadAdminIds(),
   };
 }

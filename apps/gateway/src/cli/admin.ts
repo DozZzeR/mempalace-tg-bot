@@ -28,7 +28,7 @@ function usage(): never {
     [
       "usage:",
       "  users",
-      "  admit <telegramUserId> [displayName] [--admin]",
+      "  admit <telegramUserId> [displayName]",
       "  projects",
       "  publish <projectId> <wing> <title> [description]",
       "  restrict <telegramUserId> <projectId...>",
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   const db = openDatabase(config.statePath);
-  const registry = new Registry(db);
+  const registry = new Registry(db, config.adminIds);
 
   switch (command) {
     case "users": {
@@ -68,8 +68,14 @@ async function main(): Promise<void> {
           row["restricted"] === 1
             ? `only: ${row["projects"] ?? "(nothing)"}`
             : "all published projects";
-        const admin = row["admin"] === 1 ? " [admin]" : "";
+        const admin = config.adminIds.includes(Number(row["id"])) ? " [admin]" : "";
         console.log(`${row["id"]}  ${row["name"] || "(no name)"}${admin}  — ${scope}`);
+      }
+      // Configured admins need no row, so they would not appear above.
+      for (const id of config.adminIds) {
+        if (!rows.some((row) => Number(row["id"]) === id)) {
+          console.log(`${id}  (no row) [admin]  — all published projects`);
+        }
       }
       break;
     }
@@ -77,12 +83,10 @@ async function main(): Promise<void> {
     case "admit": {
       const id = Number(args[0]);
       if (!Number.isInteger(id)) usage();
-      registry.admit({
-        telegramUserId: id,
-        displayName: args[1] ?? "",
-        isAdmin: args.includes("--admin"),
-      });
+      registry.admit({ telegramUserId: id, displayName: args[1] ?? "" });
       console.log(`admitted ${id} — sees all published projects by default`);
+      // Admin-ness is not grantable here on purpose; it lives in ADMIN_IDS.
+      console.log("(to make someone an admin, add their id to ADMIN_IDS)");
       break;
     }
 

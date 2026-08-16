@@ -42,7 +42,7 @@ const palace = new FakePalace({
 });
 
 const db = openDatabase(":memory:");
-const registry = new Registry(db);
+const registry = new Registry(db, [SEED_USER]);
 
 registry.publish({
   id: "demo",

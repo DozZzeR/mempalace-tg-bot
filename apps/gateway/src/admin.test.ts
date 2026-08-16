@@ -18,12 +18,12 @@ let app: ReturnType<typeof buildServer>;
 
 beforeEach(() => {
   db = openDatabase(":memory:");
-  registry = new Registry(db);
+  // Admin-ness comes from configuration, not from a row.
+  registry = new Registry(db, [BOSS]);
   admin = new AdminStore({ db, registry, secret: SECRET, ttlMs: 60_000 });
 
   registry.publish({ id: "alpha", wing: "alpha", title: "Alpha" });
   registry.publish({ id: "beta", wing: "beta", title: "Beta" });
-  registry.admit({ telegramUserId: BOSS, displayName: "Boss", isAdmin: true });
   registry.admit({ telegramUserId: ALICE, displayName: "Alice" });
 
   app = buildServer({
@@ -132,6 +132,21 @@ describe("the admin session", () => {
       headers: as(BOSS),
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  test("the configured owner is an admin without any database row", () => {
+    // No admit() was called for BOSS. Locking the owner out of their own bot by
+    // editing a table is not a state worth being able to reach.
+    expect(registry.caller(BOSS)?.isAdmin).toBe(true);
+    expect(registry.visibleTo(BOSS).map((p) => p.id)).toEqual(["alpha", "beta"]);
+  });
+
+  test("an admitted user cannot become an admin through the database", () => {
+    db.prepare(`UPDATE users SET is_admin = 1 WHERE telegram_user_id = ?`).run(
+      ALICE,
+    );
+    // The row is storage, not authority.
+    expect(registry.caller(ALICE)?.isAdmin).toBe(false);
   });
 
   test("an expired session stops working", async () => {

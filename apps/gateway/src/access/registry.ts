@@ -34,8 +34,17 @@ export class Registry {
   // and cannot erase those. `erasableSyntaxOnly` in tsconfig catches it.
   private readonly db: Database;
 
-  constructor(db: Database) {
+  /**
+   * Admins come from configuration (ADMIN_IDS), not from a row anyone can
+   * write. Two consequences, both wanted: nothing reachable at runtime can
+   * promote an account, and a fresh database still has an owner — there is no
+   * bootstrap step where the system exists but nobody can administer it.
+   */
+  private readonly adminIds: ReadonlySet<number>;
+
+  constructor(db: Database, adminIds: Iterable<number> = []) {
     this.db = db;
+    this.adminIds = new Set(adminIds);
   }
 
   /**
@@ -69,7 +78,10 @@ export class Registry {
       );
   }
 
-  /** Admits a user to the bot — cut 1 of the access model. */
+  /**
+   * Admits a user to the bot — cut 1 of the access model. `isAdmin` is stored
+   * for the record only; whether someone is an admin is decided by ADMIN_IDS.
+   */
   admit(input: {
     telegramUserId: number;
     displayName?: string;
@@ -129,7 +141,13 @@ export class Registry {
     return rows.filter((row) => !isForbiddenWing(row.wing)).map(toProject);
   }
 
-  /** The caller, if they are on the allowlist. Undefined means "not admitted". */
+  /**
+   * The caller, if they are on the allowlist. Undefined means "not admitted".
+   *
+   * A configured admin is admitted implicitly, with or without a row. Locking
+   * the owner out of their own bot by editing a table is not a state worth
+   * being able to reach.
+   */
   caller(telegramUserId: number): Caller | undefined {
     const row = this.db
       .prepare(
@@ -137,11 +155,20 @@ export class Registry {
          FROM users WHERE telegram_user_id = ?`,
       )
       .get(telegramUserId) as UserRow | undefined;
+
+    if (this.adminIds.has(telegramUserId)) {
+      return {
+        id: telegramUserId,
+        displayName: row?.display_name ?? "",
+        isAdmin: true,
+      };
+    }
+
     if (row === undefined) return undefined;
     return {
       id: row.telegram_user_id,
       displayName: row.display_name,
-      isAdmin: row.is_admin === 1,
+      isAdmin: false,
     };
   }
 
@@ -153,7 +180,12 @@ export class Registry {
     const user = this.db
       .prepare(`SELECT restricted FROM users WHERE telegram_user_id = ?`)
       .get(telegramUserId) as { restricted: number } | undefined;
-    if (user === undefined) return [];
+
+    // A configured admin with no row still sees the registry; otherwise the
+    // owner would have to admit themselves before they could use anything.
+    if (user === undefined) {
+      return this.adminIds.has(telegramUserId) ? this.published() : [];
+    }
 
     const rows = (
       user.restricted === 1
