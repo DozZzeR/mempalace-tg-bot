@@ -244,9 +244,22 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
       const opened = await deps.gateway.openAdminSession(userId, secret);
       ctx.session.adminExpiresAt = opened.expiresAt;
       await showAdminHome(ctx, false);
-    } catch {
-      // Wrong secret and "not an admin" answer the same way.
-      await ctx.reply("Не получилось.");
+    } catch (error) {
+      // Three different failures used to share one message, which sent whoever
+      // hit it looking in the wrong place. A missing ADMIN_SECRET_HASH is a
+      // server-side omission and is safe to name — the gateway answers 404 for
+      // that regardless of who asked, so saying so reveals nothing about the
+      // caller. A wrong phrase and "not an admin" stay deliberately identical.
+      const kind = error instanceof GatewayError ? error.kind : "unavailable";
+      await ctx.reply(
+        kind === "not_found"
+          ? "Админский вход не настроен на сервере: в .env пуст ADMIN_SECRET_HASH.\n\n" +
+              "Сгенерируйте: npm run admin -- hash, вставьте строку целиком, " +
+              "затем pm2 restart mempalace-gateway --update-env"
+          : kind === "forbidden"
+            ? "Фраза не подошла."
+            : "Фасад сейчас недоступен. Попробуйте через минуту.",
+      );
     }
   });
 
