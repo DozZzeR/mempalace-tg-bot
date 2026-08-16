@@ -267,13 +267,33 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     const userId = ctx.from?.id;
     const secret = ctx.match.trim();
 
-    // Delete first, whatever happens next: the secret is now in a chat log that
-    // outlives this conversation, and on a shared or forwarded screen it is the
-    // whole key. Deleting can fail (no rights, too old) — that is not a reason
-    // to skip trying.
-    await ctx.deleteMessage().catch(() => undefined);
+    // Delete only when there is an argument. With one, the message now holds
+    // the phrase and must go — it would otherwise sit in a chat log that
+    // outlives the conversation, and on a shared or forwarded screen it is the
+    // whole key. Deleting can fail (no rights, too old); that is not a reason
+    // not to try. Without an argument there is nothing to protect, and deleting
+    // would itself signal that the command means something.
+    if (secret !== "") {
+      await ctx.deleteMessage().catch(() => undefined);
+    }
 
-    if (userId === undefined || secret === "") {
+    if (userId === undefined) return;
+
+    // Everything below explains that an admin entrance exists. Say none of it
+    // to someone who is not an admin: the gateway already answers 404 on admin
+    // routes so as not to confirm the API exists, and it would be odd for the
+    // bot to announce it in words. To a non-admin the command is unknown.
+    const isAdmin = await deps.gateway
+      .projects(userId)
+      .then((state) => state.isAdmin)
+      .catch(() => false);
+
+    if (!isAdmin) {
+      await ctx.reply("Не знаю такой команды. Наберите /start.");
+      return;
+    }
+
+    if (secret === "") {
       await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
       return;
     }
