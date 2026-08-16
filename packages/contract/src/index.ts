@@ -50,6 +50,13 @@ export type SearchResponse = {
 
 export type ProjectsResponse = {
   projects: Project[];
+  /** Whether to offer the admin entrance at all. */
+  isAdmin: boolean;
+  /**
+   * How many people are waiting on a decision. Admin-only, and present even
+   * when zero so the bot can tell "none waiting" from "not an admin".
+   */
+  pendingRequests?: number;
 };
 
 export type DrawerResponse = {

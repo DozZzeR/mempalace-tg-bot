@@ -143,6 +143,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
     const body: ProjectsResponse = {
       projects: deps.registry.visibleTo(caller.id),
+      isAdmin: caller.isAdmin,
+      // Only an admin is told this, and it travels with the project list so the
+      // first screen can say "someone is waiting" without a second round trip.
+      ...(caller.isAdmin && deps.admin !== undefined
+        ? { pendingRequests: deps.admin.pending().length }
+        : {}),
     };
     return reply.send(body);
   });

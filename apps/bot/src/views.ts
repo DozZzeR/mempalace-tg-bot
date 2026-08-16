@@ -28,24 +28,50 @@ export function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-export function projectListView(projects: Project[]): View {
-  if (projects.length === 0) {
+export function projectListView(input: {
+  projects: Project[];
+  isAdmin?: boolean;
+  pendingRequests?: number;
+}): View {
+  const admin: Button[][] = [];
+  if (input.isAdmin === true) {
+    const waiting = input.pendingRequests ?? 0;
+    admin.push([
+      {
+        // The count rides on the button itself. A separate notice is something
+        // to dismiss; a number on the way in is something you act on.
+        text: waiting > 0 ? `⚙️ Админ · 📥 ${waiting}` : "⚙️ Админ",
+        data: "adm:enter",
+      },
+    ]);
+  }
+
+  if (input.projects.length === 0) {
     return {
       text:
         "Вам пока не открыт ни один проект.\n\n" +
         "Это не ошибка — доступ выдаёт администратор.",
-      buttons: [],
+      buttons: admin,
     };
   }
 
+  const waiting = input.pendingRequests ?? 0;
+  const notice =
+    input.isAdmin === true && waiting > 0
+      ? `\n\n📥 <b>Ждут решения: ${waiting}</b> — загляните в Админ.`
+      : "";
+
   return {
-    text: "Выберите проект:",
-    // Index rather than id: callback_data is capped at 64 bytes, and project
-    // ids are free-form. The index is resolved against the same list stored in
-    // the session, so it cannot address anything the user was not just shown.
-    buttons: projects.map((project, index) => [
-      { text: project.title, data: `open:${index}` },
-    ]),
+    text: `Выберите проект:${notice}`,
+    buttons: [
+      // Index rather than id: callback_data is capped at 64 bytes, and project
+      // ids are free-form. The index is resolved against the same list stored
+      // in the session, so it cannot address anything the user was not shown.
+      ...input.projects.map((project, index) => [
+        { text: project.title, data: `open:${index}` },
+      ]),
+      ...admin,
+    ],
   };
 }
 

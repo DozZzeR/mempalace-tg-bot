@@ -20,7 +20,9 @@ const ALPHA: Project = { id: "alpha", title: "Alpha" };
 
 describe("project list", () => {
   test("offers one button per project", () => {
-    const view = projectListView([ALPHA, { id: "beta", title: "Beta" }]);
+    const view = projectListView({
+      projects: [ALPHA, { id: "beta", title: "Beta" }],
+    });
     expect(view.buttons).toEqual([
       [{ text: "Alpha", data: "open:0" }],
       [{ text: "Beta", data: "open:1" }],
@@ -28,7 +30,7 @@ describe("project list", () => {
   });
 
   test("explains an empty list instead of showing nothing", () => {
-    const view = projectListView([]);
+    const view = projectListView({ projects: [] });
     expect(view.buttons).toEqual([]);
     expect(view.text).toContain("администратор");
   });
@@ -36,8 +38,49 @@ describe("project list", () => {
   test("addresses projects by index, never by id", () => {
     // callback_data is capped at 64 bytes and project ids are free-form, so an
     // index keeps the payload bounded whatever the registry contains.
-    const view = projectListView([{ id: "x".repeat(300), title: "Long" }]);
+    const view = projectListView({
+      projects: [{ id: "x".repeat(300), title: "Long" }],
+    });
     expect(view.buttons[0]?.[0]?.data).toBe("open:0");
+  });
+
+  test("shows no admin entrance to an ordinary person", () => {
+    const view = projectListView({ projects: [ALPHA] });
+    expect(view.buttons.flat().map((b) => b.data)).not.toContain("adm:enter");
+  });
+
+  test("offers the admin entrance to an admin", () => {
+    const view = projectListView({ projects: [ALPHA], isAdmin: true });
+    expect(view.buttons.flat().map((b) => b.data)).toContain("adm:enter");
+  });
+
+  test("carries the waiting count on the way in", () => {
+    const view = projectListView({
+      projects: [ALPHA],
+      isAdmin: true,
+      pendingRequests: 2,
+    });
+
+    // On the button as well as in the text: a number you walk past is easier
+    // to act on than a notice you dismiss.
+    expect(view.buttons.flat().some((b) => b.text.includes("2"))).toBe(true);
+    expect(view.text).toContain("Ждут решения: 2");
+  });
+
+  test("says nothing about requests when none are waiting", () => {
+    const view = projectListView({
+      projects: [ALPHA],
+      isAdmin: true,
+      pendingRequests: 0,
+    });
+    expect(view.text).not.toContain("Ждут решения");
+  });
+
+  test("still offers the admin entrance when there are no projects", () => {
+    const view = projectListView({ projects: [], isAdmin: true });
+    // Otherwise a fresh deployment with nothing published leaves the owner with
+    // no way in at all.
+    expect(view.buttons.flat().map((b) => b.data)).toContain("adm:enter");
   });
 });
 

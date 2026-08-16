@@ -8,7 +8,6 @@ import type {
   Member,
   MembersResponse,
   Note,
-  Project,
   ProjectsResponse,
   SearchResponse,
 } from "@mempalace-bot/contract";
@@ -19,7 +18,7 @@ import type {
  * takes no access decision — it asks, and the gateway decides.
  */
 export interface GatewayClient {
-  projects(userId: number): Promise<Project[]>;
+  projects(userId: number): Promise<ProjectsResponse>;
   search(
     userId: number,
     projectId: string,
@@ -151,9 +150,8 @@ export class HttpGatewayClient implements GatewayClient {
     return (await response.json()) as T;
   }
 
-  async projects(userId: number): Promise<Project[]> {
-    const body = await this.get<ProjectsResponse>("/projects", userId);
-    return body.projects;
+  async projects(userId: number): Promise<ProjectsResponse> {
+    return this.get<ProjectsResponse>("/projects", userId);
   }
 
   async search(

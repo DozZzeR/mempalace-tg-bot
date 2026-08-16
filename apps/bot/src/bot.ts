@@ -132,12 +132,18 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     const userId = ctx.from?.id;
     if (userId === undefined) return;
 
-    const projects = await deps.gateway.projects(userId);
-    ctx.session.projects = projects;
+    const state = await deps.gateway.projects(userId);
+    ctx.session.projects = state.projects;
     ctx.session.currentProjectId = undefined;
     ctx.session.pages = [];
 
-    const view = projectListView(projects);
+    const view = projectListView({
+      projects: state.projects,
+      isAdmin: state.isAdmin,
+      ...(state.pendingRequests === undefined
+        ? {}
+        : { pendingRequests: state.pendingRequests }),
+    });
     const options = {
       parse_mode: "HTML" as const,
       reply_markup: toKeyboard(view),
@@ -233,6 +239,22 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
     return true;
   }
+
+  bot.callbackQuery("adm:enter", async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    // An open session goes straight in; otherwise the secret is asked for. The
+    // button exists either way, so an admin never has to remember that the
+    // entrance is a slash command.
+    if (ctx.session.adminExpiresAt !== undefined) {
+      await showAdminHome(ctx, true).catch(async () => {
+        ctx.session.adminExpiresAt = undefined;
+        await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      });
+      return;
+    }
+    await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+  });
 
   bot.callbackQuery("adm:home", async (ctx) => {
     await ctx.answerCallbackQuery();
