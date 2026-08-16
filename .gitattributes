@@ -1,0 +1,9 @@
+# Normalize to LF in the repository. Development is on Windows, deployment is
+# Linux (Hetzner) — without this, shell scripts and systemd units committed from
+# Windows arrive with CRLF and fail in ways that read as unrelated bugs.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.sqlite binary

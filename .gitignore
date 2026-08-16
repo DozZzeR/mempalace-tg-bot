@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+
+# secrets and local state — never committed (see .agents/policies/policy.md)
+.env
+.env.*
+!.env.example
+data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

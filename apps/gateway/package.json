@@ -1,0 +1,15 @@
+{
+  "name": "@mempalace-bot/gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "node --env-file-if-exists=../../.env src/index.ts"
+  },
+  "dependencies": {
+    "@mempalace-bot/contract": "*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "fastify": "^5.12.0"
+  }
+}

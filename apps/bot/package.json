@@ -1,0 +1,14 @@
+{
+  "name": "@mempalace-bot/bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "node --env-file-if-exists=../../.env src/index.ts"
+  },
+  "dependencies": {
+    "@mempalace-bot/contract": "*",
+    "grammy": "^1.32.0"
+  }
+}
