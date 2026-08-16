@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type {
   PalaceAdapter,
   PalaceDrawer,
@@ -8,7 +9,8 @@ import type {
 import type { Wing } from "./noteTarget.ts";
 
 /**
- * MemPalace over MCP streamable HTTP (D-2).
+ * MemPalace over MCP. The transport is a constructor argument, so HTTP and
+ * stdio are two factories rather than two copies of the normalization logic.
  *
  * The wing filter is passed to the palace *and* re-applied to whatever comes
  * back. That is not belt-and-braces paranoia: the adapter contract says results
@@ -21,21 +23,16 @@ type ToolResult = {
   content?: Array<{ type: string; text?: string }>;
 };
 
-export type McpPalaceOptions = {
-  url: string;
-  /**
-   * Credential for the palace. Must be scoped to a profile that cannot read
-   * private or family wings — see the D-2 note in docs/PROJECT.md.
-   */
-  authorization: string;
-};
+// The SDK's Transport type collides with exactOptionalPropertyTypes; keeping the
+// looseness at this one seam preserves strictness everywhere else.
+type SdkTransport = Parameters<Client["connect"]>[0];
 
 export class McpPalaceAdapter implements PalaceAdapter {
   private client: Client | undefined;
-  private readonly options: McpPalaceOptions;
+  private readonly makeTransport: () => SdkTransport;
 
-  constructor(options: McpPalaceOptions) {
-    this.options = options;
+  constructor(makeTransport: () => SdkTransport) {
+    this.makeTransport = makeTransport;
   }
 
   private async connected(): Promise<Client> {
@@ -45,18 +42,7 @@ export class McpPalaceAdapter implements PalaceAdapter {
       { name: "mempalace-bot-gateway", version: "0.0.0" },
       { capabilities: {} },
     );
-    const transport = new StreamableHTTPClientTransport(
-      new URL(this.options.url),
-      {
-        requestInit: {
-          headers: { Authorization: this.options.authorization },
-        },
-      },
-    );
-    // The SDK declares `sessionId: string | undefined`, which collides with our
-    // exactOptionalPropertyTypes. Narrowing the cast to this one call keeps the
-    // strictness everywhere else rather than relaxing it project-wide.
-    await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
+    await client.connect(this.makeTransport());
     this.client = client;
     return client;
   }
@@ -85,14 +71,9 @@ export class McpPalaceAdapter implements PalaceAdapter {
     query: string,
     limit: number,
   ): Promise<PalaceFragment[]> {
-    const payload = await this.call("mempalace_search", {
-      query,
-      wing,
-      limit,
-    });
+    const payload = await this.call("mempalace_search", { query, wing, limit });
 
-    const results = readArray(payload, "results");
-    return results
+    return readArray(payload, "results")
       .filter((entry) => readString(entry, "wing") === wing)
       .map((entry) => ({
         text: readString(entry, "text") ?? "",
@@ -109,7 +90,7 @@ export class McpPalaceAdapter implements PalaceAdapter {
       drawer_id: key,
       wing,
     });
-    if (payload === undefined || typeof payload !== "object") return undefined;
+    if (payload === null || typeof payload !== "object") return undefined;
 
     // A drawer fetched by id must still belong to the requested wing; a stale
     // or guessed id must not become a way to read another project.
@@ -139,6 +120,50 @@ export class McpPalaceAdapter implements PalaceAdapter {
     await this.client?.close();
     this.client = undefined;
   }
+}
+
+/**
+ * The palace on another host, over HTTPS. Needs a credential, and the
+ * credential's scope is then the palace's business as much as ours.
+ */
+export function httpPalace(options: {
+  url: string;
+  authorization: string;
+}): McpPalaceAdapter {
+  return new McpPalaceAdapter(
+    () =>
+      new StreamableHTTPClientTransport(new URL(options.url), {
+        requestInit: {
+          headers: { Authorization: options.authorization },
+        },
+      }) as unknown as SdkTransport,
+  );
+}
+
+/**
+ * The palace as a child process on the same host — the shape to prefer once the
+ * gateway sits next to MemPalace on Hetzner. No port, no token, nothing to
+ * leak; the connection's scope is set by how the process is launched (env such
+ * as MEMPALACE_ACCESS_PROFILE) rather than by a bearer string.
+ */
+export function stdioPalace(options: {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}): McpPalaceAdapter {
+  return new McpPalaceAdapter(
+    () =>
+      new StdioClientTransport({
+        command: options.command,
+        args: options.args ?? [],
+        // Inheriting the gateway's whole environment would hand the child every
+        // secret the gateway holds, including the Telegram token. Pass only
+        // what was asked for.
+        env: options.env ?? {},
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      }) as unknown as SdkTransport,
+  );
 }
 
 function readArray(payload: unknown, key: string): unknown[] {

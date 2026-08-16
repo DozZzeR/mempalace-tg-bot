@@ -7,7 +7,7 @@ import type { ErrorResponse } from "@mempalace-bot/contract";
 import { loadConfig } from "./config.ts";
 import { openDatabase } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
-import { McpPalaceAdapter } from "./palace/mcpAdapter.ts";
+import { httpPalace, stdioPalace } from "./palace/mcpAdapter.ts";
 import { buildServer } from "./server.ts";
 
 async function main(): Promise<void> {
@@ -15,10 +15,10 @@ async function main(): Promise<void> {
 
   const db = openDatabase(config.statePath);
   const registry = new Registry(db);
-  const palace = new McpPalaceAdapter({
-    url: config.palaceUrl,
-    authorization: config.palaceAuthorization,
-  });
+  const palace =
+    config.palace.kind === "stdio"
+      ? stdioPalace(config.palace)
+      : httpPalace(config.palace);
 
   const app = buildServer({
     registry,
