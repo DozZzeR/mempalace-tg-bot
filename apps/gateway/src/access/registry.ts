@@ -133,6 +133,14 @@ export class Registry {
       .run(telegramUserId);
   }
 
+  /** Project ids with their wings. Admin surface only — never sent to the bot. */
+  publishedWings(): Array<{ id: string; wing: string }> {
+    const rows = this.db
+      .prepare(`SELECT id, wing FROM projects`)
+      .all() as Array<{ id: string; wing: string }>;
+    return rows.filter((row) => !isForbiddenWing(row.wing));
+  }
+
   /** Every published project, regardless of who is asking. Admin surface only. */
   published(): Project[] {
     const rows = this.db

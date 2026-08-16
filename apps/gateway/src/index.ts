@@ -8,6 +8,7 @@ import { loadConfig } from "./config.ts";
 import { openDatabase } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
 import { AdminStore } from "./access/admin.ts";
+import { RateLimiter } from "./access/rateLimiter.ts";
 import { httpPalace, stdioPalace } from "./palace/mcpAdapter.ts";
 import { CodexModel } from "./model/codexModel.ts";
 import { AnswerService } from "./answer/answerService.ts";
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
     ...(admin === undefined || config.admin === undefined
       ? {}
       : { admin, adminTtlMs: config.admin.ttlMs }),
+    limiter: new RateLimiter(config.limits),
     logger: true,
   });
 

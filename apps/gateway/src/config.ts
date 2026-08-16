@@ -35,7 +35,10 @@ export type GatewayConfig = {
    * can promote an account, and a fresh database still has an owner.
    */
   adminIds: number[];
+  limits: { search: RateRule; note: RateRule };
 };
+
+type RateRule = { capacity: number; refillPerMinute: number };
 
 class ConfigError extends Error {}
 
@@ -181,5 +184,18 @@ export function loadConfig(): GatewayConfig {
     model: loadModel(),
     admin: loadAdmin(),
     adminIds: loadAdminIds(),
+    limits: {
+      // A search costs a model run of half a minute or so; six in reserve with
+      // three returning a minute is generous for a person and useless for a
+      // loop.
+      search: {
+        capacity: Number(optional("SEARCH_BURST", "6")),
+        refillPerMinute: Number(optional("SEARCH_PER_MINUTE", "3")),
+      },
+      note: {
+        capacity: Number(optional("NOTE_BURST", "10")),
+        refillPerMinute: Number(optional("NOTE_PER_MINUTE", "5")),
+      },
+    },
   };
 }

@@ -146,6 +146,26 @@ export class AdminStore {
     );
   }
 
+  /**
+   * Publishes a wing as a project, deriving the identifier from the wing name.
+   * Deriving rather than asking keeps the two from drifting apart and removes
+   * a field an admin could mistype into a project nobody can reach.
+   */
+  publish(wing: string, title: string): string {
+    const id = slugify(wing);
+    this.#registry.publish({ id, wing, title: title.trim().slice(0, 80) || wing });
+    return id;
+  }
+
+  unpublish(projectId: string): void {
+    // Grants reference projects, so removing one has to clear them too or the
+    // rows outlive their subject and reappear if the id is ever reused.
+    this.#db
+      .prepare(`DELETE FROM user_projects WHERE project_id = ?`)
+      .run(projectId);
+    this.#db.prepare(`DELETE FROM projects WHERE id = ?`).run(projectId);
+  }
+
   /** Opens a session if the secret matches. Comparison is constant-time. */
   openSession(telegramUserId: number, secret: string): boolean {
     const caller = this.#registry.caller(telegramUserId);
@@ -183,6 +203,10 @@ export class AdminStore {
     }
     return true;
   }
+}
+
+function slugify(wing: string): string {
+  return wing.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function matches(given: string, expected: string): boolean {

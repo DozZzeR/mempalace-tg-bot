@@ -1,6 +1,8 @@
 import type {
   AdminSessionResponse,
   AdminStateResponse,
+  AdminWing,
+  AdminWingsResponse,
   CreateNoteRequest,
   ListNotesResponse,
   Note,
@@ -31,6 +33,9 @@ export interface GatewayClient {
     target: number,
     projectIds: string[] | null,
   ): Promise<void>;
+  adminWings(userId: number): Promise<AdminWing[]>;
+  publishProject(userId: number, wing: string, title: string): Promise<void>;
+  unpublishProject(userId: number, projectId: string): Promise<void>;
   /**
    * Files a note. Note the arguments: what to say, never where it goes. The
    * gateway derives the destination, so there is nothing here for the bot to
@@ -44,15 +49,22 @@ export interface GatewayClient {
 }
 
 /** Why a call failed, in terms the bot can turn into something a person reads. */
-export type GatewayFailure = "forbidden" | "not_found" | "unavailable";
+export type GatewayFailure =
+  | "forbidden"
+  | "not_found"
+  | "rate_limited"
+  | "busy"
+  | "unavailable";
 
 export class GatewayError extends Error {
   readonly kind: GatewayFailure;
+  readonly retryAfterSeconds: number | undefined;
 
-  constructor(kind: GatewayFailure, message: string) {
+  constructor(kind: GatewayFailure, message: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "GatewayError";
     this.kind = kind;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -109,6 +121,21 @@ export class HttpGatewayClient implements GatewayClient {
     }
     if (response.status === 404) {
       throw new GatewayError("not_found", "no such project");
+    }
+    if (response.status === 429) {
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        retryAfterSeconds?: number;
+      };
+      // "Already working on it" and "you have used your allowance" deserve
+      // different words: one resolves itself, the other needs waiting.
+      return Promise.reject(
+        new GatewayError(
+          body.error === "in_flight" ? "busy" : "rate_limited",
+          body.error ?? "rate limited",
+          body.retryAfterSeconds,
+        ),
+      );
     }
     if (!response.ok) {
       throw new GatewayError("unavailable", `gateway said ${response.status}`);
@@ -191,5 +218,30 @@ export class HttpGatewayClient implements GatewayClient {
     await this.request<void>("PUT", `/admin/users/${target}/projects`, userId, {
       projectIds,
     });
+  }
+
+  async adminWings(userId: number): Promise<AdminWing[]> {
+    const body = await this.request<AdminWingsResponse>(
+      "GET",
+      "/admin/wings",
+      userId,
+    );
+    return body.wings;
+  }
+
+  async publishProject(
+    userId: number,
+    wing: string,
+    title: string,
+  ): Promise<void> {
+    await this.request<void>("POST", "/admin/projects", userId, { wing, title });
+  }
+
+  async unpublishProject(userId: number, projectId: string): Promise<void> {
+    await this.request<void>(
+      "DELETE",
+      `/admin/projects/${encodeURIComponent(projectId)}`,
+      userId,
+    );
   }
 }

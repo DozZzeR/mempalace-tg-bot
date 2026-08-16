@@ -2,15 +2,19 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
 import type {
   AccessRequest,
   AdminUser,
+  AdminWing,
   NoteKind,
   Project,
 } from "@mempalace-bot/contract";
 import {
   adminHomeView,
   adminLockedView,
+  publishPromptView,
   requestsView,
+  unpublishConfirmView,
   userProjectsView,
   usersView,
+  wingsView,
 } from "./adminViews.ts";
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
@@ -54,6 +58,9 @@ type SessionData = {
   adminUsers: AdminUser[];
   adminProjects: Project[];
   adminRequests: AccessRequest[];
+  adminWings: AdminWing[];
+  /** Set while an admin is being asked for a project title. */
+  awaitingPublishWing: string | undefined;
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -69,6 +76,8 @@ function freshSession(): SessionData {
     adminUsers: [],
     adminProjects: [],
     adminRequests: [],
+    adminWings: [],
+    awaitingPublishWing: undefined,
   };
 }
 
@@ -88,6 +97,12 @@ function excuse(error: unknown): string {
         return "У вас нет доступа к боту. За доступом — к администратору.";
       case "not_found":
         return "Такого проекта нет.";
+      case "rate_limited":
+        return error.retryAfterSeconds === undefined
+          ? "Слишком часто. Подождите немного."
+          : `Слишком часто. Попробуйте через ${error.retryAfterSeconds} с.`;
+      case "busy":
+        return "Предыдущий вопрос ещё обрабатывается — ответ придёт сам.";
       case "unavailable":
         return "Хранилище сейчас недоступно. Попробуйте через минуту.";
     }
@@ -325,6 +340,66 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
   });
 
+  async function showWings(ctx: BotContext): Promise<void> {
+    const wings = await deps.gateway.adminWings(ctx.from?.id ?? 0);
+    ctx.session.adminWings = wings;
+
+    const view = wingsView(wings);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  }
+
+  bot.callbackQuery("adm:projects", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await adminGuard(ctx))) return;
+    await showWings(ctx).catch(async () => {
+      await ctx.reply("Не получилось получить список крыльев.");
+    });
+  });
+
+  bot.callbackQuery(/^adm:wing:(\d+)$/, async (ctx) => {
+    if (!(await adminGuard(ctx))) return;
+
+    const entry = ctx.session.adminWings[Number(ctx.match?.[1])];
+    if (entry === undefined) {
+      await ctx.answerCallbackQuery("Список устарел");
+      return;
+    }
+    await ctx.answerCallbackQuery();
+
+    if (entry.published) {
+      const view = unpublishConfirmView(entry);
+      await ctx.editMessageText(view.text, {
+        parse_mode: "HTML",
+        reply_markup: toKeyboard(view),
+      });
+      return;
+    }
+
+    // Publishing needs a human-facing name, so ask for one instead of
+    // defaulting to the wing name — people see this, agents wrote that.
+    ctx.session.awaitingPublishWing = entry.wing;
+    const view = publishPromptView(entry.wing);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery(/^adm:unpub:(.+)$/, async (ctx) => {
+    if (!(await adminGuard(ctx))) return;
+
+    try {
+      await deps.gateway.unpublishProject(ctx.from.id, ctx.match?.[1] ?? "");
+      await ctx.answerCallbackQuery("Снято");
+      await showWings(ctx);
+    } catch {
+      await ctx.answerCallbackQuery("Не получилось");
+    }
+  });
+
   bot.callbackQuery(/^adm:all:(\d+)$/, async (ctx) => {
     if (!(await adminGuard(ctx))) return;
 
@@ -465,6 +540,19 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
 
     if (projectId === undefined) {
       await ctx.reply("Сначала выберите проект — /start.");
+      return;
+    }
+
+    // An admin mid-publication: this message is the project title.
+    const publishing = ctx.session.awaitingPublishWing;
+    if (publishing !== undefined) {
+      ctx.session.awaitingPublishWing = undefined;
+      try {
+        await deps.gateway.publishProject(userId, publishing, ctx.message.text);
+        await ctx.reply(`Опубликовано: ${ctx.message.text}`);
+      } catch (error) {
+        await ctx.reply(excuse(error));
+      }
       return;
     }
 

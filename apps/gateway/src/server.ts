@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import type {
   AdminSessionResponse,
   AdminStateResponse,
+  AdminWingsResponse,
   CreateNoteRequest,
   DrawerResponse,
   ErrorResponse,
@@ -13,6 +14,8 @@ import type {
 import type { Registry, Caller } from "./access/registry.ts";
 import { ProjectSession } from "./access/projectSession.ts";
 import type { AdminStore } from "./access/admin.ts";
+import { ForbiddenWingError, isForbiddenWing } from "./access/forbidden.ts";
+import type { RateLimiter } from "./access/rateLimiter.ts";
 import { AnswerService } from "./answer/answerService.ts";
 import type { PalaceAdapter } from "./palace/adapter.ts";
 
@@ -35,6 +38,8 @@ export type ServerDeps = {
   answers?: AnswerService;
   /** Absent means there is no admin surface at all. */
   admin?: AdminStore;
+  /** Absent means no rate limiting. */
+  limiter?: RateLimiter;
   /** How long an opened admin session lasts. */
   adminTtlMs?: number;
   /** Vitest wants silence; production wants logs. */
@@ -152,43 +157,66 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         return fail(reply, 400, { error: "empty query", code: "bad_request" });
       }
 
+      // Checked before the project is resolved, so a rate-limited caller learns
+      // nothing about whether the project exists.
+      const verdict = deps.limiter?.take("search", caller.id, true);
+      if (verdict !== undefined && !verdict.allowed) {
+        return fail(reply, 429, {
+          error: verdict.reason,
+          code: "rate_limited",
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        });
+      }
+      let released = false;
+      const release = (): void => {
+        if (released) return;
+        released = true;
+        deps.limiter?.release("search", caller.id);
+      };
+
       // Cut 3. Undefined covers "no such project", "forbidden wing" and
       // "outside this caller's set" alike — the caller cannot tell which.
-      const session = ProjectSession.open(
-        deps.registry,
-        deps.palace,
-        caller.id,
-        request.params.id,
-      );
-      if (session === undefined) return fail(reply, 404, NOT_FOUND);
+      try {
+        const session = ProjectSession.open(
+          deps.registry,
+          deps.palace,
+          caller.id,
+          request.params.id,
+        );
+        if (session === undefined) return fail(reply, 404, NOT_FOUND);
 
-      const title =
-        deps.registry
-          .visibleTo(caller.id)
-          .find((project) => project.id === request.params.id)?.title ??
-        request.params.id;
+        const title =
+          deps.registry
+            .visibleTo(caller.id)
+            .find((project) => project.id === request.params.id)?.title ??
+          request.params.id;
 
-      const answers = deps.answers ?? new AnswerService();
-      const result = await answers.answer(session, title, query, {
-        maxFragments: SEARCH_LIMIT,
-      });
+        const answers = deps.answers ?? new AnswerService();
+        const result = await answers.answer(session, title, query, {
+          maxFragments: SEARCH_LIMIT,
+        });
 
-      const body: SearchResponse = {
-        projectId: request.params.id,
-        query,
-        synthesized: result.synthesized,
-        ...(result.answer === undefined ? {} : { answer: result.answer }),
-        fragments: result.fragments.map((fragment) => ({
-          text: fragment.text,
-          score: fragment.score,
-          provenance: {
-            hall: fragment.hall,
-            room: fragment.room,
-            createdAt: fragment.createdAt,
-          },
-        })),
-      };
-      return reply.send(body);
+        const body: SearchResponse = {
+          projectId: request.params.id,
+          query,
+          synthesized: result.synthesized,
+          ...(result.answer === undefined ? {} : { answer: result.answer }),
+          fragments: result.fragments.map((fragment) => ({
+            text: fragment.text,
+            score: fragment.score,
+            provenance: {
+              hall: fragment.hall,
+              room: fragment.room,
+              createdAt: fragment.createdAt,
+            },
+          })),
+        };
+        return reply.send(body);
+      } finally {
+        // In `finally`, so a thrown error does not leave the person unable to
+        // search until a restart.
+        release();
+      }
     },
   );
 
@@ -264,6 +292,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
       if (kind === undefined) {
         return fail(reply, 400, { error: "bad kind", code: "bad_request" });
+      }
+
+      const verdict = deps.limiter?.take("note", caller.id);
+      if (verdict !== undefined && !verdict.allowed) {
+        return fail(reply, 429, {
+          error: verdict.reason,
+          code: "rate_limited",
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        });
       }
 
       const session = ProjectSession.open(
@@ -374,6 +411,68 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
       const ids = request.body?.projectIds;
       admin.setProjects(target, Array.isArray(ids) ? ids : undefined);
+      return reply.code(204).send();
+    },
+  );
+
+  /**
+   * Wings the palace holds, with a flag for those already published. Forbidden
+   * wings are filtered out here as well as rejected on publish — an admin
+   * should never be offered a button that cannot work.
+   */
+  app.get("/admin/wings", async (_request, reply) => {
+    const admin = deps.admin;
+    if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+    const published = new Map(
+      deps.registry.publishedWings().map((entry) => [entry.wing, entry.id]),
+    );
+    const wings = (await deps.palace.listWings())
+      .filter((wing) => !isForbiddenWing(wing))
+      .sort()
+      .map((wing) => {
+        const projectId = published.get(wing);
+        return projectId === undefined
+          ? { wing, published: false }
+          : { wing, published: true, projectId };
+      });
+
+    const body: AdminWingsResponse = { wings };
+    return reply.send(body);
+  });
+
+  app.post<{ Body: { wing?: string; title?: string } }>(
+    "/admin/projects",
+    async (request, reply) => {
+      const admin = deps.admin;
+      if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const wing = (request.body?.wing ?? "").trim();
+      const title = (request.body?.title ?? "").trim();
+      if (wing === "" || title === "") {
+        return fail(reply, 400, { error: "wing and title required", code: "bad_request" });
+      }
+
+      try {
+        const id = admin.publish(wing, title);
+        return reply.code(201).send({ id });
+      } catch (error) {
+        if (error instanceof ForbiddenWingError) {
+          // Publishing a denied wing is refused here as it is everywhere else.
+          return fail(reply, 403, { error: "forbidden wing", code: "forbidden" });
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/admin/projects/:id",
+    async (request, reply) => {
+      const admin = deps.admin;
+      if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+      admin.unpublish(request.params.id);
       return reply.code(204).send();
     },
   );

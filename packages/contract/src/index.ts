@@ -110,6 +110,21 @@ export type AdminStateResponse = {
   projects: Project[];
 };
 
+/**
+ * A palace wing as an admin sees it while deciding what to publish. This is the
+ * one place a wing name crosses the wire, and it is admin-only — ordinary
+ * traffic still never names a palace location.
+ */
+export type AdminWing = {
+  wing: string;
+  published: boolean;
+  projectId?: string;
+};
+
+export type AdminWingsResponse = {
+  wings: AdminWing[];
+};
+
 export type AdminSessionResponse = {
   /** ISO timestamp after which admin actions stop working. */
   expiresAt: string;
@@ -121,5 +136,12 @@ export type ErrorResponse = {
    * Deliberately coarse. A project the caller may not see must be reported the
    * same way as one that does not exist, or the response leaks its existence.
    */
-  code: "not_found" | "forbidden" | "bad_request" | "internal";
+  code:
+    | "not_found"
+    | "forbidden"
+    | "bad_request"
+    | "rate_limited"
+    | "internal";
+  /** Present on rate_limited: how long to wait before trying again. */
+  retryAfterSeconds?: number;
 };

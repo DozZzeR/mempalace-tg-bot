@@ -2,6 +2,7 @@ import type {
   AccessRequest,
   AdminStateResponse,
   AdminUser,
+  AdminWing,
   Project,
 } from "@mempalace-bot/contract";
 import { escapeHtml, type Button, type View } from "./views.ts";
@@ -27,6 +28,7 @@ export function adminHomeView(state: AdminStateResponse, expiresAt: string): Vie
     buttons: [
       [{ text: `📥 Заявки (${waiting})`, data: "adm:requests" }],
       [{ text: `👥 Пользователи (${state.users.length})`, data: "adm:users" }],
+      [{ text: `📚 Проекты (${state.projects.length})`, data: "adm:projects" }],
       [{ text: "🔒 Закрыть сессию", data: "adm:close" }],
     ],
   };
@@ -120,6 +122,56 @@ export function userProjectsView(
         ? "Видит <b>все опубликованные</b> проекты. Отметьте нужные, чтобы ограничить."
         : `Ограничен: <b>${user.projectIds.length}</b> из ${projects.length}.`),
     buttons,
+  };
+}
+
+export function wingsView(wings: AdminWing[]): View {
+  if (wings.length === 0) {
+    return {
+      text: "Палаццо не отдало ни одного крыла.",
+      buttons: [[{ text: "← Назад", data: "adm:home" }]],
+    };
+  }
+
+  const buttons: Button[][] = wings.slice(0, 25).map((entry, index) => [
+    {
+      text: `${entry.published ? "☑" : "☐"} ${short(entry.wing)}`,
+      data: `adm:wing:${index}`,
+    },
+  ]);
+  buttons.push([{ text: "← Назад", data: "adm:home" }]);
+
+  const published = wings.filter((w) => w.published).length;
+  return {
+    text:
+      `<b>Проекты</b>\nОпубликовано ${published} из ${wings.length} крыльев.\n\n` +
+      "Отмеченные видны людям. Нажмите, чтобы опубликовать или снять.\n" +
+      "<i>Приватные и семейные крылья сюда не попадают вовсе.</i>",
+    buttons,
+  };
+}
+
+export function publishPromptView(wing: string): View {
+  return {
+    text:
+      `Публикуем крыло <code>${escapeHtml(wing)}</code>.\n\n` +
+      "Пришлите название, под которым люди увидят его в списке.",
+    buttons: [[{ text: "← Отмена", data: "adm:projects" }]],
+  };
+}
+
+export function unpublishConfirmView(entry: AdminWing): View {
+  return {
+    text:
+      `Снять с публикации <b>${escapeHtml(entry.wing)}</b>?\n\n` +
+      "<i>Записи в палаццо останутся на месте — исчезнет только доступ через бота, " +
+      "вместе с персональными настройками доступа к этому проекту.</i>",
+    buttons: [
+      [
+        { text: "Да, снять", data: `adm:unpub:${entry.projectId ?? ""}` },
+        { text: "Отмена", data: "adm:projects" },
+      ],
+    ],
   };
 }
 
