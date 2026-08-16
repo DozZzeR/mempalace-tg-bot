@@ -43,7 +43,9 @@ async function main(): Promise<void> {
           ttlMs: config.admin.ttlMs,
         });
   if (admin === undefined) {
-    console.log("admin surface off — set ADMIN_SECRET to enable");
+    console.log(
+      "admin surface off — run `npm run admin -- hash` and set ADMIN_SECRET_HASH",
+    );
   } else if (config.adminIds.length === 0) {
     // Worth saying loudly: with a secret but no ids, no one can ever open a
     // session, and the failure looks like a wrong secret.
