@@ -66,8 +66,34 @@ export async function verifySecret(
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+/**
+ * Whether a stored value is a complete, usable hash.
+ *
+ * Checks the whole shape, not just the prefix. A value truncated while being
+ * copied — easy, since it is 90-odd characters — would pass a prefix test and
+ * then silently refuse the correct phrase forever, sending whoever set it up
+ * looking for the fault in the phrase. Better to fail at startup and say so.
+ */
 export function looksLikeHash(value: string): boolean {
-  return value.startsWith("scrypt:");
+  const parts = value.split(":");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+
+  const [, n, r, p, salt, key] = parts;
+  for (const parameter of [n, r, p]) {
+    const parsed = Number(parameter);
+    if (!Number.isInteger(parsed) || parsed <= 0) return false;
+  }
+
+  return (
+    isHex(salt) &&
+    isHex(key) &&
+    (salt?.length ?? 0) >= SALT_BYTES * 2 &&
+    (key?.length ?? 0) >= KEY_BYTES * 2
+  );
+}
+
+function isHex(value: string | undefined): boolean {
+  return value !== undefined && value.length % 2 === 0 && /^[0-9a-f]+$/.test(value);
 }
 
 /**

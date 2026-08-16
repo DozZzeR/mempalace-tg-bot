@@ -174,7 +174,10 @@ function loadAdmin(): { secret: string; ttlMs: number } | undefined {
 
   if (!looksLikeHash(hash)) {
     throw new ConfigError(
-      "ADMIN_SECRET_HASH must be a hash, not a passphrase — run `npm run admin -- hash`",
+      "ADMIN_SECRET_HASH is not a complete hash. It must be the whole line from " +
+        "`npm run admin -- hash`, starting with scrypt: and about 100 characters " +
+        "long — a value cut short while copying would otherwise refuse the right " +
+        "phrase with no explanation.",
     );
   }
 

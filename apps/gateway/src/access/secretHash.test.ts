@@ -62,4 +62,32 @@ describe("admin phrase hashing", () => {
     expect(looksLikeHash(await hashSecret(PHRASE))).toBe(true);
     expect(looksLikeHash(PHRASE)).toBe(false);
   });
+
+  test("rejects a hash cut short while copying", async () => {
+    const stored = await hashSecret(PHRASE);
+
+    // The value is ~100 characters, so a partial paste is easy. A prefix check
+    // would accept it, and then the correct phrase would be refused forever
+    // with the fault looking like it lay in the phrase.
+    for (const cut of [20, 40, 60, stored.length - 10]) {
+      expect(looksLikeHash(stored.slice(0, cut))).toBe(false);
+    }
+  });
+
+  test("rejects a hash with a mangled parameter", async () => {
+    const stored = await hashSecret(PHRASE);
+    const parts = stored.split(":");
+
+    expect(looksLikeHash(["scrypt", "abc", parts[2], parts[3], parts[4], parts[5]].join(":"))).toBe(
+      false,
+    );
+    expect(looksLikeHash(["bcrypt", ...parts.slice(1)].join(":"))).toBe(false);
+  });
+
+  test("rejects a salt or key that is not hex", async () => {
+    const parts = (await hashSecret(PHRASE)).split(":");
+    expect(
+      looksLikeHash(["scrypt", parts[1], parts[2], parts[3], "ZZZZ", parts[5]].join(":")),
+    ).toBe(false);
+  });
 });
