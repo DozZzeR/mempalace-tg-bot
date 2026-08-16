@@ -133,6 +133,39 @@ export class Registry {
       .run(telegramUserId);
   }
 
+  /**
+   * People who can see this project: everyone unrestricted, everyone granted
+   * it explicitly, plus the configured admins.
+   *
+   * This exists so a message can be addressed to someone. It does disclose who
+   * else is in a project to anyone else in it — acceptable for a shared
+   * workspace, and the alternative (addressing by raw Telegram id) would turn
+   * the bot into a way to message arbitrary strangers.
+   */
+  membersOf(projectId: ProjectId): Array<{ id: number; displayName: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT u.telegram_user_id AS id, u.display_name AS name
+         FROM users u
+         WHERE u.restricted = 0
+            OR EXISTS (SELECT 1 FROM user_projects p
+                       WHERE p.telegram_user_id = u.telegram_user_id
+                         AND p.project_id = ?)
+         ORDER BY u.display_name`,
+      )
+      .all(projectId) as Array<{ id: number; name: string }>;
+
+    const members = new Map<number, string>();
+    for (const row of rows) members.set(row.id, row.name);
+    // Admins see every project, so they are reachable in every project even
+    // without a row.
+    for (const id of this.adminIds) {
+      if (!members.has(id)) members.set(id, "");
+    }
+
+    return [...members].map(([id, displayName]) => ({ id, displayName }));
+  }
+
   /** Project ids with their wings. Admin surface only — never sent to the bot. */
   publishedWings(): Array<{ id: string; wing: string }> {
     const rows = this.db

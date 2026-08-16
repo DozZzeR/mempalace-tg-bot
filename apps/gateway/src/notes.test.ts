@@ -191,11 +191,75 @@ describe("note validation", () => {
   });
 
   test("keeps an addressee only on a message", async () => {
-    await post("alpha", { text: "привет", kind: "message", to: 555 });
-    await post("alpha", { text: "мысль", kind: "thought", to: 555 });
+    // BOB is granted alpha, so he is a member of it and can be addressed.
+    await post("alpha", { text: "привет", kind: "message", to: BOB });
+    await post("alpha", { text: "мысль", kind: "thought", to: BOB });
 
-    expect(palace.writes[0]?.content).toContain("to: 555");
-    expect(palace.writes[1]?.content).not.toContain("to: 555");
+    expect(palace.writes[0]?.content).toContain(`to: ${BOB}`);
+    expect(palace.writes[1]?.content).not.toContain(`to: ${BOB}`);
+  });
+
+  test("refuses a message with no addressee", async () => {
+    const res = await post("alpha", { text: "кому-то", kind: "message" });
+    expect(res.statusCode).toBe(400);
+    expect(palace.writes).toEqual([]);
+  });
+
+  test("refuses an addressee who is not in the project", async () => {
+    const res = await post("alpha", {
+      text: "привет",
+      kind: "message",
+      to: 424242,
+    });
+
+    // Without this the bot becomes a way to send Telegram messages to any id a
+    // caller cares to type.
+    expect(res.statusCode).toBe(400);
+    expect(palace.writes).toEqual([]);
+  });
+
+  test("refuses an addressee who cannot see this particular project", async () => {
+    // BOB is restricted to alpha, so he is not a member of beta.
+    const res = await post("beta", { text: "привет", kind: "message", to: BOB });
+
+    expect(res.statusCode).toBe(400);
+    expect(palace.writes).toEqual([]);
+  });
+});
+
+describe("who can be addressed", () => {
+  test("lists the other people who can see the project", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/projects/alpha/members",
+      headers: as(ALICE),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const ids = (res.json().members as Array<{ id: number }>).map((m) => m.id);
+    expect(ids).toContain(BOB);
+    // The caller is left out: addressing yourself is not a feature.
+    expect(ids).not.toContain(ALICE);
+  });
+
+  test("does not list members of a project the caller cannot see", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/projects/beta/members",
+      headers: as(BOB),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  test("a restricted user is not a member of projects they lack", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/projects/beta/members",
+      headers: as(ALICE),
+    });
+
+    const ids = (res.json().members as Array<{ id: number }>).map((m) => m.id);
+    expect(ids).not.toContain(BOB);
   });
 });
 

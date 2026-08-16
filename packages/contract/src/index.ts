@@ -83,6 +83,16 @@ export type Note = {
   to?: number;
 };
 
+/** Someone who can see a project, and so can be addressed in it. */
+export type Member = {
+  id: number;
+  displayName: string;
+};
+
+export type MembersResponse = {
+  members: Member[];
+};
+
 export type ListNotesResponse = {
   projectId: ProjectId;
   notes: Note[];

@@ -5,6 +5,8 @@ import type {
   AdminWingsResponse,
   CreateNoteRequest,
   ListNotesResponse,
+  Member,
+  MembersResponse,
   Note,
   Project,
   ProjectsResponse,
@@ -24,6 +26,7 @@ export interface GatewayClient {
     query: string,
   ): Promise<SearchResponse>;
   notes(userId: number, projectId: string): Promise<Note[]>;
+  members(userId: number, projectId: string): Promise<Member[]>;
   requestAccess(userId: number, displayName: string): Promise<void>;
   openAdminSession(userId: number, secret: string): Promise<AdminSessionResponse>;
   adminState(userId: number): Promise<AdminStateResponse>;
@@ -168,6 +171,14 @@ export class HttpGatewayClient implements GatewayClient {
       userId,
     );
     return body.notes;
+  }
+
+  async members(userId: number, projectId: string): Promise<Member[]> {
+    const body = await this.get<MembersResponse>(
+      `/projects/${encodeURIComponent(projectId)}/members`,
+      userId,
+    );
+    return body.members;
   }
 
   async writeNote(

@@ -3,6 +3,7 @@ import type {
   AccessRequest,
   AdminUser,
   AdminWing,
+  Member,
   NoteKind,
   Project,
 } from "@mempalace-bot/contract";
@@ -18,6 +19,7 @@ import {
 } from "./adminViews.ts";
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
+  addresseeView,
   answerPages,
   answerView,
   noteKindView,
@@ -61,6 +63,10 @@ type SessionData = {
   adminWings: AdminWing[];
   /** Set while an admin is being asked for a project title. */
   awaitingPublishWing: string | undefined;
+  /** Addressee chosen for a message, pending the text. */
+  awaitingTo: number | undefined;
+  /** People in the current project, for the addressee picker. */
+  members: Member[];
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -78,6 +84,8 @@ function freshSession(): SessionData {
     adminRequests: [],
     adminWings: [],
     awaitingPublishWing: undefined,
+    awaitingTo: undefined,
+    members: [],
   };
 }
 
@@ -455,12 +463,17 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
 
   bot.callbackQuery("note", async (ctx) => {
     await ctx.answerCallbackQuery();
-    if (ctx.session.currentProjectId === undefined) {
+    const projectId = ctx.session.currentProjectId;
+    if (projectId === undefined) {
       await ctx.reply("Сначала выберите проект — /start.");
       return;
     }
 
-    const view = noteKindView();
+    ctx.session.members = await deps.gateway
+      .members(ctx.from.id, projectId)
+      .catch(() => []);
+
+    const view = noteKindView(ctx.session.members.length > 0);
     await ctx.editMessageText(view.text, {
       parse_mode: "HTML",
       reply_markup: toKeyboard(view),
@@ -474,7 +487,36 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     if (kind === undefined) return;
 
     ctx.session.awaitingNote = kind;
+    ctx.session.awaitingTo = undefined;
     const view = notePromptView(kind);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery("kind:message", async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    const view = addresseeView(ctx.session.members);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery(/^to:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    const member = ctx.session.members[Number(ctx.match?.[1])];
+    if (member === undefined) {
+      await ctx.reply("Список устарел. Наберите /start.");
+      return;
+    }
+
+    ctx.session.awaitingNote = "message";
+    ctx.session.awaitingTo = member.id;
+    const view = notePromptView("message");
     await ctx.editMessageText(view.text, {
       parse_mode: "HTML",
       reply_markup: toKeyboard(view),
@@ -511,7 +553,10 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
 
     try {
-      const view = notesListView(await deps.gateway.notes(userId, projectId));
+      const view = notesListView(
+        await deps.gateway.notes(userId, projectId),
+        userId,
+      );
       await ctx.editMessageText(view.text, {
         parse_mode: "HTML",
         reply_markup: toKeyboard(view),
@@ -562,16 +607,39 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
       // message should be a question again rather than silently retrying as a
       // note the person thought they had already sent.
       ctx.session.awaitingNote = undefined;
+      const to = ctx.session.awaitingTo;
+      ctx.session.awaitingTo = undefined;
+
       try {
         const note = await deps.gateway.writeNote(userId, projectId, {
           text: ctx.message.text,
           kind,
+          ...(kind === "message" && to !== undefined ? { to } : {}),
         });
+
+        // Delivery is the bot's job because only the bot holds a Telegram
+        // token — deliberately, so the gateway cannot message anyone. It is
+        // attempted after the write, never instead of it: the note is in the
+        // project either way, and someone who has not started the bot will
+        // find it when they next open the room.
+        let delivered = true;
+        if (kind === "message" && to !== undefined) {
+          delivered = await ctx.api
+            .sendMessage(
+              to,
+              `📬 Вам записали в проекте:\n\n${ctx.message.text}`,
+            )
+            .then(() => true)
+            .catch(() => false);
+        }
+
         const view = noteSavedView(note);
-        await ctx.reply(view.text, {
-          parse_mode: "HTML",
-          reply_markup: toKeyboard(view),
-        });
+        await ctx.reply(
+          delivered
+            ? view.text
+            : `${view.text}\n\n<i>Уведомление не доставлено — человек ещё не открывал бота. Запись он увидит в комнате проекта.</i>`,
+          { parse_mode: "HTML", reply_markup: toKeyboard(view) },
+        );
       } catch (error) {
         await ctx.reply(excuse(error));
       }

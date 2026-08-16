@@ -1,4 +1,10 @@
-import type { Fragment, Note, NoteKind, Project } from "@mempalace-bot/contract";
+import type {
+  Fragment,
+  Member,
+  Note,
+  NoteKind,
+  Project,
+} from "@mempalace-bot/contract";
 
 /**
  * Pure presentation. Given data, produce what the user should see — no network,
@@ -68,14 +74,36 @@ const KIND_LABEL: Record<NoteKind, string> = {
   message: "сообщение",
 };
 
-export function noteKindView(): View {
+export function noteKindView(canMessage: boolean): View {
+  const buttons: Button[][] = [
+    [
+      { text: "💭 Мысль", data: "kind:thought" },
+      { text: "🗺 План", data: "kind:plan" },
+    ],
+  ];
+  // Offered only when there is somebody to address; a button that leads to an
+  // empty list is worse than no button.
+  if (canMessage) {
+    buttons.push([{ text: "✉️ Сообщение участнику", data: "kind:message" }]);
+  }
+  buttons.push([{ text: "← Отмена", data: "cancel" }]);
+
+  return { text: "Что записываем?", buttons };
+}
+
+export function addresseeView(members: Member[]): View {
   return {
-    text: "Что записываем?",
+    text:
+      "Кому?\n\n" +
+      "<i>Сообщение ляжет в общую комнату проекта — его увидят и остальные. " +
+      "Это запись с адресатом, а не личная переписка.</i>",
     buttons: [
-      [
-        { text: "💭 Мысль", data: "kind:thought" },
-        { text: "🗺 План", data: "kind:plan" },
-      ],
+      ...members.slice(0, 20).map((member, index) => [
+        {
+          text: member.displayName || `id ${member.id}`,
+          data: `to:${index}`,
+        },
+      ]),
       [{ text: "← Отмена", data: "cancel" }],
     ],
   };
@@ -105,7 +133,7 @@ export function noteSavedView(note: Note): View {
   };
 }
 
-export function notesListView(notes: Note[]): View {
+export function notesListView(notes: Note[], readerId?: number): View {
   const buttons: Button[][] = [
     [{ text: "✍ Записать", data: "note" }],
     [{ text: "← К списку проектов", data: "back" }],
@@ -124,7 +152,12 @@ export function notesListView(notes: Note[]): View {
       const date = note.createdAt.slice(0, 10);
       const who = escapeHtml(note.authorName);
       const head = date === "" ? who : `${who} · ${date}`;
-      return `<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}\n${escapeHtml(clip(note.text, 400))}`;
+      // A message addressed to the reader is the one thing in this list they
+      // must not scroll past, so it is marked rather than left to be spotted.
+      const mine =
+        note.kind === "message" && readerId !== undefined && note.to === readerId;
+      const mark = mine ? "📬 <b>вам</b> — " : "";
+      return `${mark}<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}\n${escapeHtml(clip(note.text, 400))}`;
     })
     .join("\n\n");
 

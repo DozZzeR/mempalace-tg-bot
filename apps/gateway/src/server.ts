@@ -7,6 +7,7 @@ import type {
   DrawerResponse,
   ErrorResponse,
   ListNotesResponse,
+  MembersResponse,
   NoteKind,
   ProjectsResponse,
   SearchResponse,
@@ -268,6 +269,35 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     },
   );
 
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/members",
+    async (request, reply) => {
+      const caller = request.caller;
+      if (caller === undefined) return fail(reply, 403, NOT_FOUND);
+
+      // Opening a session is the permission check: only someone who can see the
+      // project may learn who else can.
+      const session = ProjectSession.open(
+        deps.registry,
+        deps.palace,
+        caller.id,
+        request.params.id,
+      );
+      if (session === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const body: MembersResponse = {
+        members: deps.registry
+          .membersOf(request.params.id)
+          .filter((member) => member.id !== caller.id)
+          .map((member) => ({
+            id: member.id,
+            displayName: member.displayName,
+          })),
+      };
+      return reply.send(body);
+    },
+  );
+
   /**
    * The only write in the system.
    *
@@ -294,6 +324,20 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         return fail(reply, 400, { error: "bad kind", code: "bad_request" });
       }
 
+      // An addressee must be someone who can see this project. Without this the
+      // bot becomes a way to send Telegram messages to any id a caller cares to
+      // type — a spam vector wearing our name.
+      const to = typeof body.to === "number" ? body.to : undefined;
+      if (kind === "message") {
+        if (to === undefined) {
+          return fail(reply, 400, { error: "addressee required", code: "bad_request" });
+        }
+        const members = deps.registry.membersOf(request.params.id);
+        if (!members.some((member) => member.id === to)) {
+          return fail(reply, 400, { error: "unknown addressee", code: "bad_request" });
+        }
+      }
+
       const verdict = deps.limiter?.take("note", caller.id);
       if (verdict !== undefined && !verdict.allowed) {
         return fail(reply, 429, {
@@ -314,7 +358,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       const note = await session.writeNote({
         text,
         kind,
-        ...(typeof body.to === "number" ? { to: body.to } : {}),
+        ...(to === undefined ? {} : { to }),
       });
       return reply.code(201).send(note);
     },
