@@ -105,17 +105,17 @@ export class CodexModel implements ModelPort {
 
       const child = spawn("codex", args, {
         cwd: projectRoot,
-        // Only PATH and TMPDIR. Inheriting our environment would hand the model
-        // process the Telegram token, the gateway secret and the palace
-        // credential — none of which it has any use for.
-        env: {
-          ...(process.env["PATH"] === undefined
-            ? {}
-            : { PATH: process.env["PATH"] }),
-          ...(process.env["TMPDIR"] === undefined
-            ? {}
-            : { TMPDIR: process.env["TMPDIR"] }),
-        },
+        // A named allow-list, not the inherited environment: our own holds the
+        // Telegram token, the gateway secret and the palace credential, none of
+        // which the model process has any use for.
+        //
+        // HOME is a deliberate exception. Codex keeps its credentials and its
+        // model cache under ~/.codex, and without HOME it cannot authenticate
+        // and falls back to refreshing the model list over the network — which
+        // then fails on a response field this CLI version does not know. The
+        // symptom is an opaque "unknown variant" error nowhere near the cause.
+        // The sandbox is read-only, so reaching HOME does not let it write.
+        env: pick(["PATH", "HOME", "TMPDIR"]),
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -222,6 +222,16 @@ export class CodexModel implements ModelPort {
     this.#active -= 1;
     this.#waiting.shift()?.();
   }
+}
+
+/** Copies only the named variables through to the child process. */
+function pick(names: string[]): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 function buildPrompt(request: ModelRequest): string {
