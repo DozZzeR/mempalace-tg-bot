@@ -16,8 +16,9 @@
  */
 
 import { loadConfig } from "../config.ts";
-import { openDatabase } from "../state/db.ts";
+import { openDatabase, type Database } from "../state/db.ts";
 import { Registry } from "../access/registry.ts";
+import { AdminStore } from "../access/admin.ts";
 import { ForbiddenWingError } from "../access/forbidden.ts";
 import { httpPalace, stdioPalace } from "../palace/mcpAdapter.ts";
 import { hashSecret } from "../access/secretHash.ts";
@@ -31,7 +32,8 @@ function usage(): never {
       "  users",
       "  admit <telegramUserId> [displayName]",
       "  projects",
-      "  publish <projectId> <wing> <title> [description]",
+      "  publish <wing> <title>            id is derived from the wing",
+      "  unpublish <projectId>",
       "  restrict <telegramUserId> <projectId...>",
       "  unrestrict <telegramUserId>",
       "  wings",
@@ -123,15 +125,13 @@ async function main(): Promise<void> {
     }
 
     case "publish": {
-      const [id, wing, title, description] = args;
-      if (!id || !wing || !title) usage();
+      const [wing, title] = args;
+      if (!wing || !title) usage();
       try {
-        registry.publish({
-          id,
-          wing,
-          title,
-          ...(description === undefined ? {} : { description }),
-        });
+        // Derived, exactly as the bot does it. Letting the CLI set an arbitrary
+        // id would mean the same wing gets different identifiers depending on
+        // which door it came through.
+        const id = admin(db, registry).publish(wing, title);
         console.log(`published ${id} -> wing ${wing}`);
       } catch (error) {
         if (error instanceof ForbiddenWingError) {
@@ -140,6 +140,14 @@ async function main(): Promise<void> {
         }
         throw error;
       }
+      break;
+    }
+
+    case "unpublish": {
+      const [id] = args;
+      if (!id) usage();
+      admin(db, registry).unpublish(id);
+      console.log(`unpublished ${id}`);
       break;
     }
 
@@ -199,6 +207,15 @@ async function main(): Promise<void> {
   }
 
   db.close();
+}
+
+/**
+ * Publishing and unpublishing go through AdminStore so the CLI and the bot
+ * behave identically. The secret and TTL are irrelevant here — no session is
+ * involved — so they are placeholders.
+ */
+function admin(db: Database, registry: Registry): AdminStore {
+  return new AdminStore({ db, registry, secret: "", ttlMs: 0 });
 }
 
 async function readStdin(): Promise<string> {
