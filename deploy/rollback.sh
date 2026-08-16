@@ -16,6 +16,11 @@ fi
 cd "$(dirname "$0")/.."
 TARGET="$1"
 
+NODE_BIN="${MEMPALACE_BOT_NODE:-/home/alexdozer/.nvm/versions/node/v25.9.0/bin/node}"
+NODE_DIR="$(dirname "${NODE_BIN}")"
+export PATH="${NODE_DIR}:${HOME}/.local/bin:${PATH}"
+NPM="${NODE_DIR}/npm"
+
 git rev-parse --verify "${TARGET}^{commit}" >/dev/null 2>&1 || {
   echo "unknown commit: ${TARGET}" >&2
   exit 1
@@ -24,7 +29,7 @@ git rev-parse --verify "${TARGET}^{commit}" >/dev/null 2>&1 || {
 echo "rolling back from $(git rev-parse --short HEAD) to ${TARGET:0:7}"
 git checkout --detach "${TARGET}"
 
-npm ci --omit=dev
+"${NPM}" ci --omit=dev
 pm2 startOrReload deploy/ecosystem.config.cjs --update-env
 pm2 save
 
