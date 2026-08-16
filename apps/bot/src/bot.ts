@@ -75,6 +75,12 @@ type SessionData = {
   awaitingTo: number | undefined;
   /** People in the current project, for the addressee picker. */
   members: Member[];
+  /**
+   * The "you need an open session" hint, if one is on screen. It is guidance
+   * for the next thing you do, so it is removed as soon as you do anything —
+   * including entering the phrase it asked for.
+   */
+  hintMessageId: number | undefined;
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -94,6 +100,7 @@ function freshSession(): SessionData {
     awaitingPublishWing: undefined,
     awaitingTo: undefined,
     members: [],
+    hintMessageId: undefined,
   };
 }
 
@@ -192,6 +199,25 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
    */
   bot.use(sequentialize((ctx) => ctx.chat?.id.toString()));
   bot.use(session({ initial: freshSession }));
+
+  /**
+   * Clears the admin hint before handling anything.
+   *
+   * It is guidance for the next action, so once an action happens it has served
+   * its purpose — including the /admin command it asked for. Leaving it behind
+   * accumulates identical "нужна открытая сессия" messages in the chat, each
+   * one referring to a moment that has passed.
+   *
+   * Runs before the handlers, so a hint sent during this update survives.
+   */
+  bot.use(async (ctx, next) => {
+    const hint = ctx.session.hintMessageId;
+    if (hint !== undefined) {
+      ctx.session.hintMessageId = undefined;
+      await ctx.api.deleteMessage(ctx.chat?.id ?? 0, hint).catch(() => undefined);
+    }
+    await next();
+  });
 
   async function showProjects(ctx: BotContext, edit: boolean): Promise<void> {
     const userId = ctx.from?.id;
@@ -294,7 +320,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
 
     if (secret === "") {
-      await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      await sendHint(ctx);
       return;
     }
 
@@ -321,10 +347,18 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
   });
 
+  /** Sends the unlock hint and remembers it, so the next action can clear it. */
+  async function sendHint(ctx: BotContext, text?: string): Promise<void> {
+    const sent = await ctx.reply(text ?? adminLockedView().text, {
+      parse_mode: "HTML",
+    });
+    ctx.session.hintMessageId = sent.message_id;
+  }
+
   async function adminGuard(ctx: BotContext): Promise<boolean> {
     const expiresAt = ctx.session.adminExpiresAt;
     if (expiresAt === undefined) {
-      await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      await sendHint(ctx);
       return false;
     }
     // Checked against the clock, not merely for presence. Saying "the session
@@ -332,9 +366,7 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     // the second is what the admin used to be told after fifteen quiet minutes.
     if (new Date(expiresAt).getTime() <= Date.now()) {
       ctx.session.adminExpiresAt = undefined;
-      await ctx.reply(
-        "Сессия истекла. Откройте заново: /admin ваша фраза",
-      );
+      await sendHint(ctx, "Сессия истекла. Откройте заново: /admin ваша фраза");
       return false;
     }
     return true;
@@ -349,11 +381,11 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     if (ctx.session.adminExpiresAt !== undefined) {
       await showAdminHome(ctx, true).catch(async () => {
         ctx.session.adminExpiresAt = undefined;
-        await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+        await sendHint(ctx);
       });
       return;
     }
-    await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+    await sendHint(ctx);
   });
 
   bot.callbackQuery("adm:home", async (ctx) => {
