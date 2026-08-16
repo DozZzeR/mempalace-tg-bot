@@ -17,8 +17,9 @@ Everything the bot touches is read-only except that one segregated write target.
 
 State as of **16 August 2026**:
 
-- `repo/` is **not yet a git repository** — the owner adds git later, before the
-  Hetzner deployment. Do not run `git init` unasked;
+- `repo/` **is the git root**, branch `main`, remote
+  `git@github.com:DozZzeR/mempalace-tg-bot.git`. `docs/` stays outside it, so
+  `docs/PROJECT.md` is not on GitHub;
 - twelve decisions are settled (below); two material questions remain open (D-5,
   D-7) and are tracked in `../docs/PROJECT.md`;
 - **M0 and M1 are complete in code**: monorepo and tooling; the gateway with all

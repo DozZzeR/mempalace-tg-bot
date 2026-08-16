@@ -51,10 +51,12 @@ for any change you make:
 
 ## Repository and branch safety
 
-- `repo/` is not yet a git repository. Do not run `git init` or any git write
-  without being asked — the owner has said git comes later, before the Hetzner
-  deployment (M4). `.gitignore` is already written and covers `.env` and the
-  SQLite state file.
+- `repo/` is the git root; `origin` is
+  `git@github.com:DozZzeR/mempalace-tg-bot.git`, default branch `main`.
+- `.gitignore` covers `.env`, `data/` and `node_modules`. Before any first-time
+  staging of new paths, re-run the three checks used at the initial commit:
+  `git check-ignore -v .env`, a scan of `git diff --cached` for token-shaped
+  content, and `git ls-files --error-unmatch .env` (which must fail).
 - Once it is: find the git root before any git write; inspect branch, status and
   existing user changes first.
 - Do not commit or push unless the user asks. If on the default branch, create a
