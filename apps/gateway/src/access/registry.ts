@@ -177,15 +177,17 @@ export class Registry {
    * user gets the whole registry; a restricted one gets only what was granted.
    */
   visibleTo(telegramUserId: number): Project[] {
+    // A configured admin always sees the whole registry, row or not. Checked
+    // before the row is read on purpose: otherwise an admin who happens to
+    // have been restricted earlier would see less than the same admin with no
+    // row at all, which is the sort of inconsistency that gets discovered at
+    // the worst moment.
+    if (this.adminIds.has(telegramUserId)) return this.published();
+
     const user = this.db
       .prepare(`SELECT restricted FROM users WHERE telegram_user_id = ?`)
       .get(telegramUserId) as { restricted: number } | undefined;
-
-    // A configured admin with no row still sees the registry; otherwise the
-    // owner would have to admit themselves before they could use anything.
-    if (user === undefined) {
-      return this.adminIds.has(telegramUserId) ? this.published() : [];
-    }
+    if (user === undefined) return [];
 
     const rows = (
       user.restricted === 1

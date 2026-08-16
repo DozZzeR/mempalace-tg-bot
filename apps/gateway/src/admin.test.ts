@@ -141,6 +141,15 @@ describe("the admin session", () => {
     expect(registry.visibleTo(BOSS).map((p) => p.id)).toEqual(["alpha", "beta"]);
   });
 
+  test("an admin cannot be restricted out of a project", () => {
+    registry.admit({ telegramUserId: BOSS, displayName: "Boss" });
+    registry.restrictTo(BOSS, []);
+
+    // An admin with a restrictive row must not see less than the same admin
+    // with no row at all.
+    expect(registry.visibleTo(BOSS).map((p) => p.id)).toEqual(["alpha", "beta"]);
+  });
+
   test("an admitted user cannot become an admin through the database", () => {
     db.prepare(`UPDATE users SET is_admin = 1 WHERE telegram_user_id = ?`).run(
       ALICE,
