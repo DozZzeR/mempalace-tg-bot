@@ -1,7 +1,21 @@
 # Deployment — Hetzner
 
 Two processes under PM2: `mempalace-gateway` and `mempalace-bot`.
-Location on the box: `~/projects/mempalace-bot` (`/opt/projects/mempalace-bot`).
+
+Layout on the box, under `~/projects/mempalace_bot_project/`
+(`/opt/projects/mempalace_bot_project/`):
+
+```
+mempalace_bot_project/
+├── bot/      this repository
+└── model/    Codex's working directory — must stay empty
+```
+
+`model/` is a **sibling** of the repo, not a child, and that is the whole point:
+Codex walks up from its working directory looking for `AGENTS.md` and
+`.agents/skills`, so any path beneath `bot/` would feed our coding-agent
+instructions to the model that answers people. Putting it in a subfolder of the
+repo does not help — it is the repo root being an ancestor that matters.
 
 ## Why these choices
 
