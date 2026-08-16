@@ -20,8 +20,11 @@ State as of **16 August 2026**:
 - `repo/` **is the git root**, branch `main`, remote
   `git@github.com:DozZzeR/mempalace-tg-bot.git`. `docs/` stays outside it, so
   `docs/PROJECT.md` is not on GitHub;
-- twelve decisions are settled (below); two material questions remain open (D-5,
-  D-7) and are tracked in `../docs/PROJECT.md`;
+- fifteen decisions are settled (below); one material question remains open
+  (D-5, model synthesis) and is tracked in `../docs/PROJECT.md`;
+- **the bot is deployed and running** on Hetzner at `~/projects/mempalace-bot`
+  under PM2 as `mempalace-gateway` and `mempalace-bot`. See `deploy/README.md`;
+  deploying is `deploy/deploy.sh`, rolling back is `deploy/rollback.sh <sha>`;
 - **M0 and M1 are complete in code**: monorepo and tooling; the gateway with all
   three access cuts, its routes, the SQLite state store and the MCP palace
   adapter. `npm run check` is green, 15 tests;
@@ -61,6 +64,10 @@ Two rules follow, and they hold until the user says otherwise:
 | R-10 | State (allowlist, registry, per-user project sets, rate limits) lives in **SQLite**. Node 25 is installed, so built-in `node:sqlite` is used and no native module is compiled (closes D-6) |
 | R-11 | The gateway reaches the palace over **MCP streamable HTTP** via `@modelcontextprotocol/sdk`. Its credential must be a separate, narrowed one — never a developer's full-access token (closes D-2) |
 | R-12 | The gateway's HTTP framework is **Fastify**, chosen once real routes existed. `inject()` gives route-level tests without binding a socket or adding a test-client dependency |
+| R-13 | **Long polling**, not a webhook (closes D-7). Bot and gateway share a host and the gateway binds loopback; polling needs no inbound port, certificate, or proxy entry |
+| R-14 | Processes run under **PM2**, not systemd — the box already boots PM2 and has `pm2-logrotate`; a second supervisor is a second place to look when something is down |
+| R-15 | The Node path in the PM2 config is **absolute**. Three versions exist on the box, a non-interactive shell picks v18, and only v25 has `node:sqlite` unflagged |
+| R-16 | The gateway reaches the palace over **loopback** at `127.0.0.1:4118` (`mem-palace-common-http`). Nothing crosses the network and no credential leaves the machine |
 
 ### Access model — three independent cuts
 
