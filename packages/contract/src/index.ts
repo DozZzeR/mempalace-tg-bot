@@ -39,6 +39,13 @@ export type SearchResponse = {
   fragments: Fragment[];
   /** True when a model composed the prose answer rather than the palace. */
   synthesized: boolean;
+  /**
+   * Prose composed by the model from the fragments, in the reader's language.
+   * Absent when no model ran or its answer was not grounded in the material.
+   * Present or not, `fragments` always carries the record itself — the reader
+   * must be able to check the prose against what was actually written.
+   */
+  answer?: string;
 };
 
 export type ProjectsResponse = {

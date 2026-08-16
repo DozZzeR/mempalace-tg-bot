@@ -10,6 +10,7 @@ import type {
 } from "@mempalace-bot/contract";
 import type { Registry, Caller } from "./access/registry.ts";
 import { ProjectSession } from "./access/projectSession.ts";
+import { AnswerService } from "./answer/answerService.ts";
 import type { PalaceAdapter } from "./palace/adapter.ts";
 
 /**
@@ -27,6 +28,8 @@ export type ServerDeps = {
   palace: PalaceAdapter;
   /** Shared secret the bot presents. */
   token: string;
+  /** Absent means verbatim search and no composed prose. */
+  answers?: AnswerService;
   /** Vitest wants silence; production wants logs. */
   logger?: boolean;
 };
@@ -109,15 +112,31 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
       // Cut 3. Undefined covers "no such project", "forbidden wing" and
       // "outside this caller's set" alike — the caller cannot tell which.
-      const wing = deps.registry.resolveWingFor(caller.id, request.params.id);
-      if (wing === undefined) return fail(reply, 404, NOT_FOUND);
+      const session = ProjectSession.open(
+        deps.registry,
+        deps.palace,
+        caller.id,
+        request.params.id,
+      );
+      if (session === undefined) return fail(reply, 404, NOT_FOUND);
 
-      const fragments = await deps.palace.search(wing, query, SEARCH_LIMIT);
+      const title =
+        deps.registry
+          .visibleTo(caller.id)
+          .find((project) => project.id === request.params.id)?.title ??
+        request.params.id;
+
+      const answers = deps.answers ?? new AnswerService();
+      const result = await answers.answer(session, title, query, {
+        maxFragments: SEARCH_LIMIT,
+      });
+
       const body: SearchResponse = {
         projectId: request.params.id,
         query,
-        synthesized: false,
-        fragments: fragments.map((fragment) => ({
+        synthesized: result.synthesized,
+        ...(result.answer === undefined ? {} : { answer: result.answer }),
+        fragments: result.fragments.map((fragment) => ({
           text: fragment.text,
           score: fragment.score,
           provenance: {

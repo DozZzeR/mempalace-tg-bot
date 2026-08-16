@@ -8,6 +8,8 @@ import { loadConfig } from "./config.ts";
 import { openDatabase } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
 import { httpPalace, stdioPalace } from "./palace/mcpAdapter.ts";
+import { CodexModel } from "./model/codexModel.ts";
+import { AnswerService } from "./answer/answerService.ts";
 import { buildServer } from "./server.ts";
 
 async function main(): Promise<void> {
@@ -20,10 +22,20 @@ async function main(): Promise<void> {
       ? stdioPalace(config.palace)
       : httpPalace(config.palace);
 
+  const answers = new AnswerService(
+    config.model === undefined ? undefined : new CodexModel(config.model),
+  );
+  console.log(
+    config.model === undefined
+      ? "reasoning layer off — verbatim search"
+      : `reasoning layer on — ${config.model.model}`,
+  );
+
   const app = buildServer({
     registry,
     palace,
     token: config.token,
+    answers,
     logger: true,
   });
 

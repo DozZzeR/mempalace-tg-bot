@@ -4,12 +4,25 @@ export type PalaceTransport =
   | { kind: "stdio"; command: string; args: string[]; env: Record<string, string>; cwd?: string }
   | { kind: "http"; url: string; authorization: string };
 
+export type ModelConfig = {
+  model: string;
+  timeoutMs: number;
+  projectRoot: string;
+  tmpDirectory: string;
+  maxConcurrency: number;
+};
+
 export type GatewayConfig = {
   port: number;
   /** Shared secret the bot presents. The gateway trusts no unauthenticated caller. */
   token: string;
   statePath: string;
   palace: PalaceTransport;
+  /**
+   * Absent means no reasoning layer: search runs on the words the person typed
+   * and no prose is composed. The bot degrades rather than fails.
+   */
+  model: ModelConfig | undefined;
 };
 
 class ConfigError extends Error {}
@@ -74,6 +87,31 @@ function parseEnv(raw: string): Record<string, string> {
   return result;
 }
 
+/**
+ * The reasoning layer is opt-in. MODEL_ENABLED=true turns it on; anything else
+ * leaves the bot running verbatim search. Making it explicit rather than
+ * inferring it from a stray variable means a half-configured box does not
+ * quietly start spending Codex time.
+ */
+function loadModel(): ModelConfig | undefined {
+  if (optional("MODEL_ENABLED", "false").toLowerCase() !== "true") {
+    return undefined;
+  }
+
+  const timeoutMs = Number(optional("MODEL_TIMEOUT_MS", "120000"));
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new ConfigError(`MODEL_TIMEOUT_MS is not valid: ${timeoutMs}`);
+  }
+
+  return {
+    model: optional("MODEL_NAME", "gpt-5.5"),
+    timeoutMs,
+    projectRoot: optional("MODEL_PROJECT_ROOT", "./data/model"),
+    tmpDirectory: optional("MODEL_TMP_DIR", "./data/model/tmp"),
+    maxConcurrency: Number(optional("MODEL_MAX_CONCURRENCY", "1")) || 1,
+  };
+}
+
 export function loadConfig(): GatewayConfig {
   const port = Number(optional("GATEWAY_PORT", "8787"));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -85,5 +123,6 @@ export function loadConfig(): GatewayConfig {
     token: required("GATEWAY_TOKEN"),
     statePath: optional("STATE_DB_PATH", "./data/state.sqlite"),
     palace: loadPalace(),
+    model: loadModel(),
   };
 }

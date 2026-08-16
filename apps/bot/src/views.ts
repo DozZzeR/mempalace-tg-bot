@@ -180,6 +180,31 @@ function renderFragment(fragment: Fragment): string {
   return `${escapeHtml(fragment.text)}\n<i>${escapeHtml(source)}</i>`;
 }
 
+/**
+ * Builds the pages of an answer: the model's prose first, when there is one,
+ * then the passages it drew on.
+ *
+ * The prose never replaces the record. A composed answer is a translation of
+ * English fragments into the reader's language, and the reader has to be able
+ * to check it — so the sources are always one tap away, never dropped.
+ */
+export function answerPages(input: {
+  answer?: string | undefined;
+  fragments: Fragment[];
+}): string[] {
+  const fragmentPages = paginate(input.fragments);
+  if (input.answer === undefined || input.answer.trim() === "") {
+    return fragmentPages;
+  }
+
+  const lead =
+    `${escapeHtml(input.answer.trim())}\n\n` +
+    `<i>Собрано моделью из ${input.fragments.length} записей проекта. ` +
+    `Дальше — сами записи.</i>`;
+
+  return [lead, ...fragmentPages];
+}
+
 export function answerView(
   pages: string[],
   pageIndex: number,
@@ -195,9 +220,12 @@ export function answerView(
   }
 
   const index = Math.min(Math.max(pageIndex, 0), pages.length - 1);
-  const header = options.synthesized
-    ? "<i>Ответ собран моделью. Исходные фрагменты — ниже.</i>\n\n"
-    : "";
+  // The synthesised marker belongs on the composed page only. Putting it on
+  // the source pages would label the record itself as model output.
+  const header =
+    options.synthesized && index === 0
+      ? "<i>✨ Ответ собран моделью</i>\n\n"
+      : "";
   const counter =
     pages.length > 1 ? `\n\n<i>Страница ${index + 1} из ${pages.length}</i>` : "";
 

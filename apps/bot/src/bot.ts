@@ -2,12 +2,12 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
 import type { NoteKind, Project } from "@mempalace-bot/contract";
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
+  answerPages,
   answerView,
   noteKindView,
   notePromptView,
   noteSavedView,
   notesListView,
-  paginate,
   projectEnteredView,
   projectListView,
   type View,
@@ -255,24 +255,37 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
       return;
     }
 
+    // A model round trip takes tens of seconds. Without a sign of life people
+    // retype the question, which starts a second run behind the first.
+    const thinking = await ctx.reply("Ищу…");
+    const typing = setInterval(() => {
+      void ctx.replyWithChatAction("typing").catch(() => undefined);
+    }, 5000);
+
     try {
       const result = await deps.gateway.search(
         userId,
         projectId,
         ctx.message.text,
       );
-      ctx.session.pages = paginate(result.fragments);
+      ctx.session.pages = answerPages(result);
       ctx.session.synthesized = result.synthesized;
 
       const view = answerView(ctx.session.pages, 0, {
         synthesized: result.synthesized,
       });
-      await ctx.reply(view.text, {
-        parse_mode: "HTML",
-        reply_markup: toKeyboard(view),
-      });
+      await ctx.api.editMessageText(
+        thinking.chat.id,
+        thinking.message_id,
+        view.text,
+        { parse_mode: "HTML", reply_markup: toKeyboard(view) },
+      );
     } catch (error) {
-      await ctx.reply(excuse(error));
+      await ctx.api
+        .editMessageText(thinking.chat.id, thinking.message_id, excuse(error))
+        .catch(() => ctx.reply(excuse(error)));
+    } finally {
+      clearInterval(typing);
     }
   });
 
