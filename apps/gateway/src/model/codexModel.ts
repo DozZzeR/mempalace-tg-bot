@@ -32,6 +32,17 @@ export type CodexOptions = {
   tmpDirectory: string;
   /** Serialises runs. Codex is heavy and this box hosts other services. */
   maxConcurrency?: number;
+  /** Binary to spawn. Absolute path avoids depending on the caller's PATH. */
+  command?: string;
+  /**
+   * Extra attempts on a process-level failure. One by default, because this
+   * CLI fails intermittently: when its model cache goes stale it refetches the
+   * model list, and the current API response contains a reasoning level
+   * ("max") that codex-cli 0.147.0 — the latest published — cannot parse. The
+   * run dies, a later one succeeds once some refresh lands. Nothing on our
+   * side can fix that; a retry is what makes it survivable.
+   */
+  retries?: number;
 };
 
 type JsonEvent = {
@@ -56,8 +67,20 @@ export class CodexModel implements ModelPort {
   async runStructured<T>(request: ModelRequest): Promise<T> {
     await this.#acquire();
     try {
-      const raw = await this.#run(request);
-      return parseStructured<T>(raw, request.purpose);
+      const attempts = 1 + Math.max(0, this.#options.retries ?? 1);
+      let last: unknown;
+
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+          return parseStructured<T>(await this.#run(request), request.purpose);
+        } catch (error) {
+          // Only process-level failures are worth another go. A schema the
+          // model keeps missing will keep missing it.
+          if (!(error instanceof ModelUnavailableError)) throw error;
+          last = error;
+        }
+      }
+      throw last;
     } finally {
       this.#release();
     }
@@ -103,7 +126,7 @@ export class CodexModel implements ModelPort {
       let settled = false;
       let timedOut = false;
 
-      const child = spawn("codex", args, {
+      const child = spawn(this.#options.command ?? "codex", args, {
         cwd: projectRoot,
         // A named allow-list, not the inherited environment: our own holds the
         // Telegram token, the gateway secret and the palace credential, none of

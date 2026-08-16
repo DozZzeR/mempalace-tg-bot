@@ -10,6 +10,8 @@ export type ModelConfig = {
   projectRoot: string;
   tmpDirectory: string;
   maxConcurrency: number;
+  command: string;
+  retries: number;
 };
 
 export type GatewayConfig = {
@@ -113,6 +115,10 @@ function loadModel(): ModelConfig | undefined {
     projectRoot: optional("MODEL_PROJECT_ROOT", "/tmp/mempalace-bot-model"),
     tmpDirectory: optional("MODEL_TMP_DIR", "/tmp/mempalace-bot-model/tmp"),
     maxConcurrency: Number(optional("MODEL_MAX_CONCURRENCY", "1")) || 1,
+    // Same lesson as the Node pin: a bare name resolves against whatever PATH
+    // the supervisor happened to have.
+    command: optional("MODEL_COMMAND", "codex"),
+    retries: Number(optional("MODEL_RETRIES", "1")) || 0,
   };
 }
 
