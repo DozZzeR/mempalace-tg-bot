@@ -79,6 +79,12 @@ export class CodexModel implements ModelPort {
       "--ephemeral",
       "--sandbox",
       "read-only",
+      // Codex refuses to run outside a git repository unless told to. Without
+      // this the only working directory it accepts is one inside a repo — and
+      // inside ours it loads AGENTS.md and .agents/skills into the context of
+      // the model that answers people. The flag is what lets the working
+      // directory be a plain, empty, instruction-free folder.
+      "--skip-git-repo-check",
       "-C",
       projectRoot,
       "-m",
@@ -178,9 +184,14 @@ export class CodexModel implements ModelPort {
             return;
           }
           if (code !== 0 && finalText.trim() === "") {
+            // Whole diagnostic, newlines flattened: Codex puts the actual cause
+            // on the second stderr line ("Reading additional input from
+            // stdin..." comes first and means nothing), and a one-line log that
+            // drops it sends you chasing the wrong thing.
+            const detail = diagnostics.trim().replaceAll(/\s*\n+\s*/g, " | ");
             reject(
               new ModelUnavailableError(
-                `codex exited with ${code}: ${diagnostics.trim() || "no output"}`,
+                `codex exited with ${code}: ${detail || "no output"}`,
               ),
             );
             return;
