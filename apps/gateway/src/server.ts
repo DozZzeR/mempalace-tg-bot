@@ -396,7 +396,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
 
       const secret = typeof request.body?.secret === "string" ? request.body.secret : "";
-      if (!admin.openSession(userId, secret)) {
+      if (!(await admin.openSession(userId, secret))) {
         // A wrong secret and a non-admin look identical from outside.
         return fail(reply, 403, { error: "forbidden", code: "forbidden" });
       }

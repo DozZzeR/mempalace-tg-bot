@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { openDatabase, type Database } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
 import { AdminStore } from "./access/admin.ts";
+import { hashSecret } from "./access/secretHash.ts";
 import { FakePalace } from "./palace/fakePalace.ts";
 import { buildServer } from "./server.ts";
 
@@ -16,11 +17,17 @@ let registry: Registry;
 let admin: AdminStore;
 let app: ReturnType<typeof buildServer>;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = openDatabase(":memory:");
   // Admin-ness comes from configuration, not from a row.
   registry = new Registry(db, [BOSS]);
-  admin = new AdminStore({ db, registry, secret: SECRET, ttlMs: 60_000 });
+  // The store holds a hash, never the phrase.
+  admin = new AdminStore({
+    db,
+    registry,
+    secret: await hashSecret(SECRET),
+    ttlMs: 60_000,
+  });
 
   registry.publish({ id: "alpha", wing: "alpha", title: "Alpha" });
   registry.publish({ id: "beta", wing: "beta", title: "Beta" });
@@ -159,7 +166,12 @@ describe("the admin session", () => {
   });
 
   test("an expired session stops working", async () => {
-    const shortLived = new AdminStore({ db, registry, secret: SECRET, ttlMs: -1 });
+    const shortLived = new AdminStore({
+      db,
+      registry,
+      secret: await hashSecret(SECRET),
+      ttlMs: -1,
+    });
     const server = buildServer({
       registry,
       palace: new FakePalace(),

@@ -55,6 +55,7 @@ Fill `.env`. It is gitignored and deploys never touch it:
 
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT`
 - `GATEWAY_TOKEN` — shared secret between the two processes, any long random string
+- `ADMIN_SECRET_HASH` — see below
 - `GATEWAY_URL=http://127.0.0.1:8787`
 - `PALACE_URL=http://127.0.0.1:4118/mcp`
 - `PALACE_AUTHORIZATION=Bearer <the common container's bearer token>`
@@ -65,6 +66,23 @@ Then:
 ```bash
 cd ~/projects/mempalace-bot && npm ci --omit=dev && pm2 start deploy/ecosystem.config.cjs && pm2 save
 ```
+
+## The admin phrase
+
+The admin unlocks a session by sending `/admin <фраза>` to the bot. What the
+server stores is a scrypt hash, never the phrase:
+
+```bash
+npm run admin -- hash
+```
+
+Type the phrase, then Ctrl-D. It prints the `ADMIN_SECRET_HASH=` line to paste
+into `.env`. The phrase is read from stdin rather than an argument so it does
+not land in the shell history or in `ps`.
+
+Use several unrelated words. A phrase you can remember carries much less
+entropy than a random string, which is why the stored form is scrypt and not a
+plain digest — each guess has to cost something.
 
 ## Routine deploy
 

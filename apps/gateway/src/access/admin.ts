@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Database } from "../state/db.ts";
 import type { Registry } from "./registry.ts";
+import { verifySecret } from "./secretHash.ts";
 
 /**
  * Admin state: pending access requests, and time-limited admin sessions.
@@ -166,11 +166,15 @@ export class AdminStore {
     this.#db.prepare(`DELETE FROM projects WHERE id = ?`).run(projectId);
   }
 
-  /** Opens a session if the secret matches. Comparison is constant-time. */
-  openSession(telegramUserId: number, secret: string): boolean {
+  /**
+   * Opens a session if the phrase matches the stored hash. Async because
+   * verification is deliberately slow — that cost is what makes a memorable
+   * phrase safe to use.
+   */
+  async openSession(telegramUserId: number, phrase: string): Promise<boolean> {
     const caller = this.#registry.caller(telegramUserId);
     if (caller?.isAdmin !== true) return false;
-    if (!matches(secret, this.#secret)) return false;
+    if (!(await verifySecret(phrase, this.#secret))) return false;
 
     this.#db
       .prepare(
@@ -209,14 +213,3 @@ function slugify(wing: string): string {
   return wing.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-function matches(given: string, expected: string): boolean {
-  const a = Buffer.from(given);
-  const b = Buffer.from(expected);
-  // timingSafeEqual throws on a length mismatch, which would itself leak the
-  // length; compare against a padded copy so every wrong secret costs the same.
-  if (a.length !== b.length) {
-    timingSafeEqual(b, b);
-    return false;
-  }
-  return timingSafeEqual(a, b);
-}

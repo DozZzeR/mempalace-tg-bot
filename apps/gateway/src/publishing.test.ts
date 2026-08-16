@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { openDatabase, type Database } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
 import { AdminStore } from "./access/admin.ts";
+import { hashSecret } from "./access/secretHash.ts";
 import { FakePalace } from "./palace/fakePalace.ts";
 import { buildServer } from "./server.ts";
 
@@ -18,7 +19,12 @@ let app: ReturnType<typeof buildServer>;
 beforeEach(async () => {
   db = openDatabase(":memory:");
   registry = new Registry(db, [BOSS]);
-  admin = new AdminStore({ db, registry, secret: SECRET, ttlMs: 60_000 });
+  admin = new AdminStore({
+    db,
+    registry,
+    secret: await hashSecret(SECRET),
+    ttlMs: 60_000,
+  });
 
   app = buildServer({
     registry,

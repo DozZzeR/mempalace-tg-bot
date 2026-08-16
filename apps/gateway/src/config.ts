@@ -1,3 +1,5 @@
+import { looksLikeHash } from "./access/secretHash.ts";
+
 /** Configuration comes from the environment only. Never from a file in the repo. */
 
 export type PalaceTransport =
@@ -157,19 +159,32 @@ function loadAdminIds(): number[] {
 }
 
 function loadAdmin(): { secret: string; ttlMs: number } | undefined {
-  const secret = process.env["ADMIN_SECRET"];
-  if (secret === undefined || secret === "") return undefined;
+  // A plaintext secret left over from an earlier setup is an error, not
+  // something to ignore quietly: ignoring it would leave someone believing they
+  // are protected by a value that does nothing.
+  if (process.env["ADMIN_SECRET"] !== undefined && process.env["ADMIN_SECRET"] !== "") {
+    throw new ConfigError(
+      "ADMIN_SECRET is no longer used. Generate a hash with `npm run admin -- hash` " +
+        "and set ADMIN_SECRET_HASH instead, then remove ADMIN_SECRET.",
+    );
+  }
+
+  const hash = process.env["ADMIN_SECRET_HASH"];
+  if (hash === undefined || hash === "") return undefined;
+
+  if (!looksLikeHash(hash)) {
+    throw new ConfigError(
+      "ADMIN_SECRET_HASH must be a hash, not a passphrase — run `npm run admin -- hash`",
+    );
+  }
 
   // Short enough that a forgotten open session closes itself, long enough to
-  // work through a queue of requests without re-entering the secret.
+  // work through a queue of requests without re-entering the phrase.
   const ttlMs = Number(optional("ADMIN_SESSION_TTL_MS", "900000"));
   if (!Number.isInteger(ttlMs) || ttlMs <= 0) {
     throw new ConfigError(`ADMIN_SESSION_TTL_MS is not valid: ${ttlMs}`);
   }
-  if (secret.length < 16) {
-    throw new ConfigError("ADMIN_SECRET must be at least 16 characters");
-  }
-  return { secret, ttlMs };
+  return { secret: hash, ttlMs };
 }
 
 export function loadConfig(): GatewayConfig {

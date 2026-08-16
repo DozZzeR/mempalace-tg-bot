@@ -20,6 +20,7 @@ import { openDatabase } from "../state/db.ts";
 import { Registry } from "../access/registry.ts";
 import { ForbiddenWingError } from "../access/forbidden.ts";
 import { httpPalace, stdioPalace } from "../palace/mcpAdapter.ts";
+import { hashSecret } from "../access/secretHash.ts";
 
 type Row = Record<string, unknown>;
 
@@ -34,6 +35,7 @@ function usage(): never {
       "  restrict <telegramUserId> <projectId...>",
       "  unrestrict <telegramUserId>",
       "  wings",
+      "  hash              read a passphrase from stdin, print ADMIN_SECRET_HASH",
     ].join("\n"),
   );
   process.exit(2);
@@ -42,6 +44,24 @@ function usage(): never {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (command === undefined) usage();
+
+  // Handled before loadConfig: this is the command you run when the admin
+  // config is missing or wrong, so it must not need a valid one.
+  //
+  // The phrase comes from stdin, never from argv — an argument would land in
+  // the shell history and be visible in `ps` to anyone else on the box.
+  if (command === "hash") {
+    const phrase = (await readStdin()).trim();
+    if (phrase.length < 12) {
+      console.error(
+        "too short. Use several unrelated words — length is what makes a\n" +
+          "memorable phrase hard to guess, and scrypt does the rest.",
+      );
+      process.exit(1);
+    }
+    console.log(`ADMIN_SECRET_HASH=${await hashSecret(phrase)}`);
+    return;
+  }
 
   const config = loadConfig();
   const db = openDatabase(config.statePath);
@@ -169,6 +189,16 @@ async function main(): Promise<void> {
   }
 
   db.close();
+}
+
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY === true) {
+    process.stderr.write("Enter the admin phrase, then Ctrl-D:\n");
+  }
+  let text = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
 }
 
 main().catch((error: unknown) => {
