@@ -1,4 +1,4 @@
-import type { Fragment, Project } from "@mempalace-bot/contract";
+import type { Fragment, Note, NoteKind, Project } from "@mempalace-bot/contract";
 
 /**
  * Pure presentation. Given data, produce what the user should see — no network,
@@ -50,9 +50,89 @@ export function projectEnteredView(project: Project): View {
   return {
     text:
       `<b>${escapeHtml(project.title)}</b>${description}\n\n` +
-      "Напишите, что вас интересует — отвечу тем, что записано в проекте.",
-    buttons: [[{ text: "← К списку проектов", data: "back" }]],
+      "Напишите, что вас интересует — отвечу тем, что записано в проекте.\n" +
+      "Или оставьте свою запись кнопкой ниже.",
+    buttons: [
+      [
+        { text: "✍ Записать", data: "note" },
+        { text: "📋 Записи", data: "notes" },
+      ],
+      [{ text: "← К списку проектов", data: "back" }],
+    ],
   };
+}
+
+const KIND_LABEL: Record<NoteKind, string> = {
+  thought: "мысль",
+  plan: "план",
+  message: "сообщение",
+};
+
+export function noteKindView(): View {
+  return {
+    text: "Что записываем?",
+    buttons: [
+      [
+        { text: "💭 Мысль", data: "kind:thought" },
+        { text: "🗺 План", data: "kind:plan" },
+      ],
+      [{ text: "← Отмена", data: "cancel" }],
+    ],
+  };
+}
+
+export function notePromptView(kind: NoteKind): View {
+  return {
+    text:
+      `Напишите ${KIND_LABEL[kind]} одним сообщением.\n\n` +
+      "<i>Запись попадёт в комнату проекта, её увидят другие участники.</i>",
+    buttons: [[{ text: "← Отмена", data: "cancel" }]],
+  };
+}
+
+export function noteSavedView(note: Note): View {
+  return {
+    text:
+      `✓ Записано как ${escapeHtml(KIND_LABEL[note.kind])}.\n\n` +
+      `<blockquote>${escapeHtml(clip(note.text, 300))}</blockquote>`,
+    buttons: [
+      [
+        { text: "✍ Ещё", data: "note" },
+        { text: "📋 Записи", data: "notes" },
+      ],
+      [{ text: "← К списку проектов", data: "back" }],
+    ],
+  };
+}
+
+export function notesListView(notes: Note[]): View {
+  const buttons: Button[][] = [
+    [{ text: "✍ Записать", data: "note" }],
+    [{ text: "← К списку проектов", data: "back" }],
+  ];
+
+  if (notes.length === 0) {
+    return {
+      text: "В этом проекте ещё никто ничего не записал. Будете первым?",
+      buttons,
+    };
+  }
+
+  const body = notes
+    .slice(0, 10)
+    .map((note) => {
+      const date = note.createdAt.slice(0, 10);
+      const who = escapeHtml(note.authorName);
+      const head = date === "" ? who : `${who} · ${date}`;
+      return `<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}\n${escapeHtml(clip(note.text, 400))}`;
+    })
+    .join("\n\n");
+
+  return { text: body, buttons };
+}
+
+function clip(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)}…`;
 }
 
 /**

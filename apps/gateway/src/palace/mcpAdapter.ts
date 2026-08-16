@@ -6,7 +6,7 @@ import type {
   PalaceDrawer,
   PalaceFragment,
 } from "./adapter.ts";
-import type { Wing } from "./noteTarget.ts";
+import type { PalaceAddress, Wing } from "./noteTarget.ts";
 
 /**
  * MemPalace over MCP. The transport is a constructor argument, so HTTP and
@@ -106,6 +106,46 @@ export class McpPalaceAdapter implements PalaceAdapter {
       room: readString(payload, "room") ?? "unknown",
       createdAt: readString(payload, "created_at") ?? "",
     };
+  }
+
+  async writeNote(address: PalaceAddress, content: string): Promise<string> {
+    const payload = await this.call("mempalace_add_drawer", {
+      wing: address.wing,
+      hall: address.hall,
+      room: address.room,
+      content,
+      added_by: "tg_bot",
+    });
+
+    const id = readString(payload, "drawer_id");
+    if (id === undefined) throw new Error("palace did not confirm the write");
+    return id;
+  }
+
+  async listRoom(
+    address: PalaceAddress,
+    limit: number,
+  ): Promise<Array<{ key: string; text: string }>> {
+    const payload = await this.call("mempalace_list_drawers", {
+      wing: address.wing,
+      room: address.room,
+      limit,
+    });
+
+    return readArray(payload, "drawers")
+      .filter(
+        (entry) =>
+          readString(entry, "wing") === address.wing &&
+          readString(entry, "room") === address.room,
+      )
+      .map((entry) => ({
+        key: readString(entry, "drawer_id") ?? "",
+        text:
+          readString(entry, "content") ??
+          readString(entry, "content_preview") ??
+          "",
+      }))
+      .filter((entry) => entry.key !== "");
   }
 
   async listWings(): Promise<string[]> {

@@ -1,4 +1,4 @@
-import type { Wing } from "./noteTarget.ts";
+import type { PalaceAddress, Wing } from "./noteTarget.ts";
 
 /**
  * The palace behind an interface. Everything above this line is unaware of how
@@ -26,11 +26,6 @@ export type PalaceDrawer = {
   createdAt: string;
 };
 
-export type PalaceNoteRecord = {
-  text: string;
-  metadata: Record<string, string | number>;
-};
-
 export interface PalaceAdapter {
   /**
    * Search within one wing. An adapter that returns fragments from outside the
@@ -44,4 +39,18 @@ export interface PalaceAdapter {
 
   /** Wings the palace itself will admit to. Used to validate the registry. */
   listWings(): Promise<string[]>;
+
+  /**
+   * The only write in the system. It takes a full `PalaceAddress`, which can
+   * only be produced by `humanNoteAddress` — there is no overload that accepts
+   * a wing, hall and room separately, so a caller cannot assemble a
+   * destination of its own.
+   */
+  writeNote(address: PalaceAddress, content: string): Promise<string>;
+
+  /** Everything in one room, newest first. Used to show a project's notes. */
+  listRoom(
+    address: PalaceAddress,
+    limit: number,
+  ): Promise<Array<{ key: string; text: string }>>;
 }

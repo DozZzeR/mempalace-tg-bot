@@ -1,4 +1,7 @@
 import type {
+  CreateNoteRequest,
+  ListNotesResponse,
+  Note,
   Project,
   ProjectsResponse,
   SearchResponse,
@@ -16,6 +19,17 @@ export interface GatewayClient {
     projectId: string,
     query: string,
   ): Promise<SearchResponse>;
+  notes(userId: number, projectId: string): Promise<Note[]>;
+  /**
+   * Files a note. Note the arguments: what to say, never where it goes. The
+   * gateway derives the destination, so there is nothing here for the bot to
+   * get wrong.
+   */
+  writeNote(
+    userId: number,
+    projectId: string,
+    note: CreateNoteRequest,
+  ): Promise<Note>;
 }
 
 /** Why a call failed, in terms the bot can turn into something a person reads. */
@@ -50,13 +64,27 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   private async get<T>(path: string, userId: number): Promise<T> {
+    return this.request<T>("GET", path, userId);
+  }
+
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    userId: number,
+    body?: unknown,
+  ): Promise<T> {
     let response: Response;
     try {
       response = await this.doFetch(`${this.baseUrl}${path}`, {
+        method,
         headers: {
           authorization: `Bearer ${this.token}`,
           "x-telegram-user-id": String(userId),
+          ...(body === undefined
+            ? {}
+            : { "content-type": "application/json" }),
         },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch (cause) {
       throw new GatewayError(
@@ -90,5 +118,26 @@ export class HttpGatewayClient implements GatewayClient {
   ): Promise<SearchResponse> {
     const path = `/projects/${encodeURIComponent(projectId)}/search?q=${encodeURIComponent(query)}`;
     return this.get<SearchResponse>(path, userId);
+  }
+
+  async notes(userId: number, projectId: string): Promise<Note[]> {
+    const body = await this.get<ListNotesResponse>(
+      `/projects/${encodeURIComponent(projectId)}/notes`,
+      userId,
+    );
+    return body.notes;
+  }
+
+  async writeNote(
+    userId: number,
+    projectId: string,
+    note: CreateNoteRequest,
+  ): Promise<Note> {
+    return this.request<Note>(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/notes`,
+      userId,
+      note,
+    );
   }
 }

@@ -26,13 +26,14 @@ export default tseslint.config(
     },
   },
   {
-    // The address computation itself, and the tests that pin it down — those
-    // tests exist precisely to assert the literal values, so the rule would be
-    // asserting against its own guard.
-    files: [
-      "apps/gateway/src/palace/noteTarget.ts",
-      "apps/gateway/src/palace/noteTarget.test.ts",
-    ],
+    // The address computation itself, plus tests.
+    //
+    // Exempting tests does not weaken the guarantee: the rule exists to stop
+    // production code from naming a destination, and a literal in a test cannot
+    // move a write — it can only assert where one landed. The write-target
+    // integrity tests are required to name "human" and "notes", since proving
+    // the address is constant is the whole point of them.
+    files: ["apps/gateway/src/palace/noteTarget.ts", "**/*.test.ts"],
     rules: { "no-restricted-syntax": "off" },
   },
 );

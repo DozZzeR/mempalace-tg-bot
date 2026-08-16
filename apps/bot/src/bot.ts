@@ -1,8 +1,12 @@
 import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "grammy";
-import type { Project } from "@mempalace-bot/contract";
+import type { NoteKind, Project } from "@mempalace-bot/contract";
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
   answerView,
+  noteKindView,
+  notePromptView,
+  noteSavedView,
+  notesListView,
   paginate,
   projectEnteredView,
   projectListView,
@@ -26,6 +30,12 @@ type SessionData = {
   currentProjectId: string | undefined;
   pages: string[];
   synthesized: boolean;
+  /**
+   * When set, the next text message is filed as a note of this kind instead of
+   * being treated as a question. Cleared as soon as it is consumed, so a second
+   * message never lands as a note by accident.
+   */
+  awaitingNote: NoteKind | undefined;
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -36,6 +46,7 @@ function freshSession(): SessionData {
     currentProjectId: undefined,
     pages: [],
     synthesized: false,
+    awaitingNote: undefined,
   };
 }
 
@@ -123,12 +134,81 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
 
     ctx.session.currentProjectId = project.id;
     ctx.session.pages = [];
+    ctx.session.awaitingNote = undefined;
 
     const view = projectEnteredView(project);
     await ctx.editMessageText(view.text, {
       parse_mode: "HTML",
       reply_markup: toKeyboard(view),
     });
+  });
+
+  bot.callbackQuery("note", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (ctx.session.currentProjectId === undefined) {
+      await ctx.reply("Сначала выберите проект — /start.");
+      return;
+    }
+
+    const view = noteKindView();
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery(/^kind:(thought|plan)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    const kind = ctx.match?.[1] as NoteKind | undefined;
+    if (kind === undefined) return;
+
+    ctx.session.awaitingNote = kind;
+    const view = notePromptView(kind);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery("cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.awaitingNote = undefined;
+
+    const project = ctx.session.projects.find(
+      (candidate) => candidate.id === ctx.session.currentProjectId,
+    );
+    if (project === undefined) {
+      await ctx.reply("Наберите /start.");
+      return;
+    }
+
+    const view = projectEnteredView(project);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery("notes", async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    const userId = ctx.from.id;
+    const projectId = ctx.session.currentProjectId;
+    if (projectId === undefined) {
+      await ctx.reply("Сначала выберите проект — /start.");
+      return;
+    }
+
+    try {
+      const view = notesListView(await deps.gateway.notes(userId, projectId));
+      await ctx.editMessageText(view.text, {
+        parse_mode: "HTML",
+        reply_markup: toKeyboard(view),
+      });
+    } catch (error) {
+      await ctx.reply(excuse(error));
+    }
   });
 
   bot.callbackQuery(/^page:(\d+)$/, async (ctx) => {
@@ -150,6 +230,28 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
 
     if (projectId === undefined) {
       await ctx.reply("Сначала выберите проект — /start.");
+      return;
+    }
+
+    const kind = ctx.session.awaitingNote;
+    if (kind !== undefined) {
+      // Cleared before the call, not after: if the write fails, the next
+      // message should be a question again rather than silently retrying as a
+      // note the person thought they had already sent.
+      ctx.session.awaitingNote = undefined;
+      try {
+        const note = await deps.gateway.writeNote(userId, projectId, {
+          text: ctx.message.text,
+          kind,
+        });
+        const view = noteSavedView(note);
+        await ctx.reply(view.text, {
+          parse_mode: "HTML",
+          reply_markup: toKeyboard(view),
+        });
+      } catch (error) {
+        await ctx.reply(excuse(error));
+      }
       return;
     }
 

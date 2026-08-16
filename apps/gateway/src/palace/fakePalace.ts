@@ -3,7 +3,7 @@ import type {
   PalaceDrawer,
   PalaceFragment,
 } from "./adapter.ts";
-import type { Wing } from "./noteTarget.ts";
+import type { PalaceAddress, Wing } from "./noteTarget.ts";
 
 /**
  * A hand-written fake honouring the adapter contract, for tests.
@@ -15,7 +15,13 @@ import type { Wing } from "./noteTarget.ts";
  */
 export class FakePalace implements PalaceAdapter {
   readonly searched: Array<{ wing: string; query: string }> = [];
-  readonly writes: unknown[] = [];
+  /** Every write, exactly as it reached the palace. Assert on this, not on status codes. */
+  readonly writes: Array<{
+    wing: string;
+    hall: string;
+    room: string;
+    content: string;
+  }> = [];
 
   private readonly contents: Record<
     string,
@@ -59,5 +65,31 @@ export class FakePalace implements PalaceAdapter {
 
   async listWings(): Promise<string[]> {
     return Object.keys(this.contents);
+  }
+
+  async writeNote(address: PalaceAddress, content: string): Promise<string> {
+    this.writes.push({
+      wing: address.wing,
+      hall: address.hall,
+      room: address.room,
+      content,
+    });
+    return `drawer_${this.writes.length}`;
+  }
+
+  async listRoom(
+    address: PalaceAddress,
+    limit: number,
+  ): Promise<Array<{ key: string; text: string }>> {
+    return this.writes
+      .filter(
+        (write) =>
+          write.wing === address.wing &&
+          write.hall === address.hall &&
+          write.room === address.room,
+      )
+      .slice(-limit)
+      .reverse()
+      .map((write, index) => ({ key: `drawer_${index}`, text: write.content }));
   }
 }

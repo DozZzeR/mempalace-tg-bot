@@ -1,11 +1,15 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import type {
+  CreateNoteRequest,
   DrawerResponse,
   ErrorResponse,
+  ListNotesResponse,
+  NoteKind,
   ProjectsResponse,
   SearchResponse,
 } from "@mempalace-bot/contract";
 import type { Registry, Caller } from "./access/registry.ts";
+import { ProjectSession } from "./access/projectSession.ts";
 import type { PalaceAdapter } from "./palace/adapter.ts";
 
 /**
@@ -40,6 +44,13 @@ function fail(reply: FastifyReply, status: number, body: ErrorResponse): void {
 }
 
 const NOT_FOUND: ErrorResponse = { error: "not found", code: "not_found" };
+
+const NOTE_KINDS: readonly NoteKind[] = ["thought", "plan", "message"];
+const MAX_NOTE_LENGTH = 4000;
+
+function asKind(value: unknown): NoteKind | undefined {
+  return NOTE_KINDS.find((kind) => kind === value);
+}
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: deps.logger ?? false });
@@ -143,6 +154,71 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         },
       };
       return reply.send(body);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/notes",
+    async (request, reply) => {
+      const caller = request.caller;
+      if (caller === undefined) return fail(reply, 403, NOT_FOUND);
+
+      const session = ProjectSession.open(
+        deps.registry,
+        deps.palace,
+        caller.id,
+        request.params.id,
+      );
+      if (session === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const body: ListNotesResponse = {
+        projectId: request.params.id,
+        notes: await session.notes(),
+      };
+      return reply.send(body);
+    },
+  );
+
+  /**
+   * The only write in the system.
+   *
+   * Note what is read off the body: text, kind, and an addressee. Nothing else,
+   * and deliberately no destination — the session computes that from the wing
+   * it was opened with. Extra fields in the body are ignored rather than
+   * merged, so `{"text":"x","wing":"family"}` writes "x" to this project and
+   * nothing else happens.
+   */
+  app.post<{ Params: { id: string }; Body: CreateNoteRequest }>(
+    "/projects/:id/notes",
+    async (request, reply) => {
+      const caller = request.caller;
+      if (caller === undefined) return fail(reply, 403, NOT_FOUND);
+
+      const body = (request.body ?? {}) as Partial<CreateNoteRequest>;
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      const kind = asKind(body.kind);
+
+      if (text === "" || text.length > MAX_NOTE_LENGTH) {
+        return fail(reply, 400, { error: "bad text", code: "bad_request" });
+      }
+      if (kind === undefined) {
+        return fail(reply, 400, { error: "bad kind", code: "bad_request" });
+      }
+
+      const session = ProjectSession.open(
+        deps.registry,
+        deps.palace,
+        caller.id,
+        request.params.id,
+      );
+      if (session === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const note = await session.writeNote({
+        text,
+        kind,
+        ...(typeof body.to === "number" ? { to: body.to } : {}),
+      });
+      return reply.code(201).send(note);
     },
   );
 
