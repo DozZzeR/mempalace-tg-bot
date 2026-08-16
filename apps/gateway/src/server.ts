@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import type {
+  AdminSessionResponse,
+  AdminStateResponse,
   CreateNoteRequest,
   DrawerResponse,
   ErrorResponse,
@@ -10,6 +12,7 @@ import type {
 } from "@mempalace-bot/contract";
 import type { Registry, Caller } from "./access/registry.ts";
 import { ProjectSession } from "./access/projectSession.ts";
+import type { AdminStore } from "./access/admin.ts";
 import { AnswerService } from "./answer/answerService.ts";
 import type { PalaceAdapter } from "./palace/adapter.ts";
 
@@ -30,6 +33,10 @@ export type ServerDeps = {
   token: string;
   /** Absent means verbatim search and no composed prose. */
   answers?: AnswerService;
+  /** Absent means there is no admin surface at all. */
+  admin?: AdminStore;
+  /** How long an opened admin session lasts. */
+  adminTtlMs?: number;
   /** Vitest wants silence; production wants logs. */
   logger?: boolean;
 };
@@ -39,6 +46,8 @@ const SEARCH_LIMIT = 8;
 declare module "fastify" {
   interface FastifyRequest {
     caller?: Caller;
+    /** Set even for strangers, who may only ask for access. */
+    callerId?: number;
   }
 }
 
@@ -48,6 +57,7 @@ function fail(reply: FastifyReply, status: number, body: ErrorResponse): void {
 
 const NOT_FOUND: ErrorResponse = { error: "not found", code: "not_found" };
 
+const DEFAULT_ADMIN_TTL_MS = 15 * 60 * 1000;
 const NOTE_KINDS: readonly NoteKind[] = ["thought", "plan", "message"];
 const MAX_NOTE_LENGTH = 4000;
 
@@ -80,6 +90,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return;
     }
 
+    // Asking for access is the one thing a stranger may do. It grants nothing;
+    // it only records that they asked, so an admin has something to act on.
+    if (request.url === "/access-requests") {
+      request.callerId = userId;
+      return;
+    }
+
     const caller = deps.registry.caller(userId);
     if (caller === undefined) {
       // Not on the allowlist: the bot answers such people not at all.
@@ -87,6 +104,31 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return;
     }
     request.caller = caller;
+    request.callerId = userId;
+  });
+
+  /**
+   * Every admin route passes through here. An admin without an open session is
+   * refused exactly like a non-admin, so the routes do not advertise that an
+   * admin surface exists.
+   */
+  app.addHook("preHandler", async (request, reply) => {
+    if (!request.url.startsWith("/admin")) return;
+    if (request.url === "/admin/session" && request.method === "POST") return;
+
+    const admin = deps.admin;
+    const caller = request.caller;
+
+    // Two distinct answers on purpose. Someone who is not an admin gets a plain
+    // 404: nothing should confirm that an admin API exists here. An admin who
+    // simply has not opened a session gets a 403, because for them the useful
+    // information is "unlock first", not "this does not exist".
+    if (admin === undefined || caller === undefined || !caller.isAdmin) {
+      return fail(reply, 404, NOT_FOUND);
+    }
+    if (!admin.hasSession(caller.id)) {
+      return fail(reply, 403, { error: "admin session required", code: "forbidden" });
+    }
   });
 
   app.get("/projects", async (request, reply) => {
@@ -238,6 +280,101 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         ...(typeof body.to === "number" ? { to: body.to } : {}),
       });
       return reply.code(201).send(note);
+    },
+  );
+
+  app.post<{ Body: { displayName?: string } }>(
+    "/access-requests",
+    async (request, reply) => {
+      const userId = request.callerId;
+      if (userId === undefined || deps.admin === undefined) {
+        return fail(reply, 404, NOT_FOUND);
+      }
+      // Already admitted people are not turned into requests.
+      if (deps.registry.caller(userId) !== undefined) {
+        return reply.code(204).send();
+      }
+      deps.admin.requestAccess(userId, (request.body?.displayName ?? "").slice(0, 100));
+      return reply.code(202).send({ ok: true });
+    },
+  );
+
+  app.post<{ Body: { secret?: string } }>(
+    "/admin/session",
+    async (request, reply) => {
+      const userId = request.callerId;
+      const admin = deps.admin;
+      if (admin === undefined || userId === undefined) {
+        return fail(reply, 404, NOT_FOUND);
+      }
+
+      const secret = typeof request.body?.secret === "string" ? request.body.secret : "";
+      if (!admin.openSession(userId, secret)) {
+        // A wrong secret and a non-admin look identical from outside.
+        return fail(reply, 403, { error: "forbidden", code: "forbidden" });
+      }
+
+      const body: AdminSessionResponse = {
+        expiresAt: new Date(
+          Date.now() + (deps.adminTtlMs ?? DEFAULT_ADMIN_TTL_MS),
+        ).toISOString(),
+      };
+      return reply.send(body);
+    },
+  );
+
+  app.delete("/admin/session", async (request, reply) => {
+    deps.admin?.closeSession(request.caller?.id ?? 0);
+    return reply.code(204).send();
+  });
+
+  app.get("/admin/state", async (_request, reply) => {
+    const admin = deps.admin;
+    if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+    const body: AdminStateResponse = {
+      requests: admin.pending().map((entry) => ({
+        telegramUserId: entry.telegramUserId,
+        displayName: entry.displayName,
+        requestedAt: entry.requestedAt,
+      })),
+      users: admin.users(),
+      projects: deps.registry.published(),
+    };
+    return reply.send(body);
+  });
+
+  app.post<{ Params: { id: string }; Body: { approve?: boolean } }>(
+    "/admin/requests/:id",
+    async (request, reply) => {
+      const admin = deps.admin;
+      if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const target = Number(request.params.id);
+      if (!Number.isInteger(target)) {
+        return fail(reply, 400, { error: "bad id", code: "bad_request" });
+      }
+      if (!admin.decide(target, request.body?.approve === true)) {
+        return fail(reply, 404, NOT_FOUND);
+      }
+      return reply.code(204).send();
+    },
+  );
+
+  app.put<{ Params: { id: string }; Body: { projectIds?: string[] | null } }>(
+    "/admin/users/:id/projects",
+    async (request, reply) => {
+      const admin = deps.admin;
+      if (admin === undefined) return fail(reply, 404, NOT_FOUND);
+
+      const target = Number(request.params.id);
+      if (!Number.isInteger(target)) {
+        return fail(reply, 400, { error: "bad id", code: "bad_request" });
+      }
+
+      const ids = request.body?.projectIds;
+      admin.setProjects(target, Array.isArray(ids) ? ids : undefined);
+      return reply.code(204).send();
     },
   );
 

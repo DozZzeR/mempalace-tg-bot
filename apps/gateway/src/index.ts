@@ -7,6 +7,7 @@ import type { ErrorResponse } from "@mempalace-bot/contract";
 import { loadConfig } from "./config.ts";
 import { openDatabase } from "./state/db.ts";
 import { Registry } from "./access/registry.ts";
+import { AdminStore } from "./access/admin.ts";
 import { httpPalace, stdioPalace } from "./palace/mcpAdapter.ts";
 import { CodexModel } from "./model/codexModel.ts";
 import { AnswerService } from "./answer/answerService.ts";
@@ -31,11 +32,29 @@ async function main(): Promise<void> {
       : `reasoning layer on — ${config.model.model}`,
   );
 
+  const admin =
+    config.admin === undefined
+      ? undefined
+      : new AdminStore({
+          db,
+          registry,
+          secret: config.admin.secret,
+          ttlMs: config.admin.ttlMs,
+        });
+  console.log(
+    admin === undefined
+      ? "admin surface off — set ADMIN_SECRET to enable"
+      : "admin surface on",
+  );
+
   const app = buildServer({
     registry,
     palace,
     token: config.token,
     answers,
+    ...(admin === undefined || config.admin === undefined
+      ? {}
+      : { admin, adminTtlMs: config.admin.ttlMs }),
     logger: true,
   });
 

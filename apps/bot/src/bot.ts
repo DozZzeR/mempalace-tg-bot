@@ -1,5 +1,17 @@
 import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "grammy";
-import type { NoteKind, Project } from "@mempalace-bot/contract";
+import type {
+  AccessRequest,
+  AdminUser,
+  NoteKind,
+  Project,
+} from "@mempalace-bot/contract";
+import {
+  adminHomeView,
+  adminLockedView,
+  requestsView,
+  userProjectsView,
+  usersView,
+} from "./adminViews.ts";
 import { GatewayError, type GatewayClient } from "./gateway/client.ts";
 import {
   answerPages,
@@ -36,6 +48,12 @@ type SessionData = {
    * message never lands as a note by accident.
    */
   awaitingNote: NoteKind | undefined;
+  /** Set while an admin session is open; the gateway is still the authority. */
+  adminExpiresAt: string | undefined;
+  /** Last rendered admin lists — callback indices resolve against these. */
+  adminUsers: AdminUser[];
+  adminProjects: Project[];
+  adminRequests: AccessRequest[];
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -47,6 +65,10 @@ function freshSession(): SessionData {
     pages: [],
     synthesized: false,
     awaitingNote: undefined,
+    adminExpiresAt: undefined,
+    adminUsers: [],
+    adminProjects: [],
+    adminRequests: [],
   };
 }
 
@@ -105,11 +127,224 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
   }
 
+  function displayName(ctx: BotContext): string {
+    const from = ctx.from;
+    if (from === undefined) return "";
+    const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
+    return from.username === undefined ? name : `${name} (@${from.username})`;
+  }
+
   bot.command("start", async (ctx) => {
     try {
       await showProjects(ctx, false);
     } catch (error) {
+      // A stranger's first contact becomes a request an admin can act on,
+      // rather than a dead end they have to chase up out of band.
+      if (error instanceof GatewayError && error.kind === "forbidden") {
+        const userId = ctx.from?.id;
+        if (userId !== undefined) {
+          await deps.gateway
+            .requestAccess(userId, displayName(ctx))
+            .catch(() => undefined);
+        }
+        await ctx.reply(
+          "Заявка на доступ отправлена. Администратор её увидит.\n\n" +
+            `Ваш ID: <code>${userId ?? "?"}</code>`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
       await ctx.reply(excuse(error));
+    }
+  });
+
+  // ---- admin ----
+
+  async function showAdminHome(ctx: BotContext, edit: boolean): Promise<void> {
+    const userId = ctx.from?.id;
+    if (userId === undefined) return;
+
+    const state = await deps.gateway.adminState(userId);
+    ctx.session.adminUsers = state.users;
+    ctx.session.adminProjects = state.projects;
+    ctx.session.adminRequests = state.requests;
+
+    const view = adminHomeView(state, ctx.session.adminExpiresAt ?? "");
+    const options = {
+      parse_mode: "HTML" as const,
+      reply_markup: toKeyboard(view),
+    };
+    if (edit) await ctx.editMessageText(view.text, options);
+    else await ctx.reply(view.text, options);
+  }
+
+  bot.command("admin", async (ctx) => {
+    const userId = ctx.from?.id;
+    const secret = ctx.match.trim();
+
+    // Delete first, whatever happens next: the secret is now in a chat log that
+    // outlives this conversation, and on a shared or forwarded screen it is the
+    // whole key. Deleting can fail (no rights, too old) — that is not a reason
+    // to skip trying.
+    await ctx.deleteMessage().catch(() => undefined);
+
+    if (userId === undefined || secret === "") {
+      await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      return;
+    }
+
+    try {
+      const opened = await deps.gateway.openAdminSession(userId, secret);
+      ctx.session.adminExpiresAt = opened.expiresAt;
+      await showAdminHome(ctx, false);
+    } catch {
+      // Wrong secret and "not an admin" answer the same way.
+      await ctx.reply("Не получилось.");
+    }
+  });
+
+  async function adminGuard(ctx: BotContext): Promise<boolean> {
+    if (ctx.session.adminExpiresAt === undefined) {
+      await ctx.reply(adminLockedView().text, { parse_mode: "HTML" });
+      return false;
+    }
+    return true;
+  }
+
+  bot.callbackQuery("adm:home", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await adminGuard(ctx))) return;
+    await showAdminHome(ctx, true).catch(async () => {
+      ctx.session.adminExpiresAt = undefined;
+      await ctx.reply("Сессия истекла. Откройте заново: /admin ваш-секрет");
+    });
+  });
+
+  bot.callbackQuery("adm:close", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.adminExpiresAt = undefined;
+    await ctx.editMessageText("Сессия закрыта.");
+  });
+
+  bot.callbackQuery("adm:requests", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await adminGuard(ctx))) return;
+
+    const view = requestsView(ctx.session.adminRequests);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  bot.callbackQuery(/^adm:(yes|no):(\d+)$/, async (ctx) => {
+    if (!(await adminGuard(ctx))) return;
+
+    const approve = ctx.match?.[1] === "yes";
+    const target = Number(ctx.match?.[2]);
+    const userId = ctx.from.id;
+
+    try {
+      await deps.gateway.decideRequest(userId, target, approve);
+      await ctx.answerCallbackQuery(approve ? "Одобрено" : "Отклонено");
+      // Tell the person, but only on approval: a denial delivered by bot is
+      // worse than silence, and the admin may want to explain it themselves.
+      if (approve) {
+        await ctx.api
+          .sendMessage(target, "Доступ открыт. Наберите /start.")
+          .catch(() => undefined);
+      }
+      await showAdminHome(ctx, true);
+    } catch {
+      await ctx.answerCallbackQuery("Не получилось");
+    }
+  });
+
+  bot.callbackQuery("adm:users", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await adminGuard(ctx))) return;
+
+    const view = usersView(ctx.session.adminUsers);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  });
+
+  async function showUserProjects(ctx: BotContext, target: number): Promise<void> {
+    const user = ctx.session.adminUsers.find(
+      (candidate) => candidate.telegramUserId === target,
+    );
+    if (user === undefined) {
+      await ctx.reply("Список устарел. Откройте /admin заново.");
+      return;
+    }
+    const view = userProjectsView(user, ctx.session.adminProjects);
+    await ctx.editMessageText(view.text, {
+      parse_mode: "HTML",
+      reply_markup: toKeyboard(view),
+    });
+  }
+
+  bot.callbackQuery(/^adm:user:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await adminGuard(ctx))) return;
+    await showUserProjects(ctx, Number(ctx.match?.[1]));
+  });
+
+  bot.callbackQuery(/^adm:tgl:(\d+):(.+)$/, async (ctx) => {
+    if (!(await adminGuard(ctx))) return;
+
+    const target = Number(ctx.match?.[1]);
+    const projectId = ctx.match?.[2] ?? "";
+    const user = ctx.session.adminUsers.find(
+      (candidate) => candidate.telegramUserId === target,
+    );
+    if (user === undefined) {
+      await ctx.answerCallbackQuery("Список устарел");
+      return;
+    }
+
+    // Toggling from the unrestricted state starts from "everything", so the
+    // first tap removes one project rather than silently dropping the rest.
+    const current = user.restricted
+      ? new Set(user.projectIds)
+      : new Set(ctx.session.adminProjects.map((project) => project.id));
+    if (current.has(projectId)) current.delete(projectId);
+    else current.add(projectId);
+
+    const next = [...current];
+    try {
+      await deps.gateway.setUserProjects(ctx.from.id, target, next);
+      user.restricted = true;
+      user.projectIds = next;
+      await ctx.answerCallbackQuery();
+      await showUserProjects(ctx, target);
+    } catch {
+      await ctx.answerCallbackQuery("Не получилось");
+    }
+  });
+
+  bot.callbackQuery(/^adm:all:(\d+)$/, async (ctx) => {
+    if (!(await adminGuard(ctx))) return;
+
+    const target = Number(ctx.match?.[1]);
+    const user = ctx.session.adminUsers.find(
+      (candidate) => candidate.telegramUserId === target,
+    );
+    if (user === undefined) {
+      await ctx.answerCallbackQuery("Список устарел");
+      return;
+    }
+
+    try {
+      await deps.gateway.setUserProjects(ctx.from.id, target, null);
+      user.restricted = false;
+      user.projectIds = [];
+      await ctx.answerCallbackQuery("Видит все проекты");
+      await showUserProjects(ctx, target);
+    } catch {
+      await ctx.answerCallbackQuery("Не получилось");
     }
   });
 

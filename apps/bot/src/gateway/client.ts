@@ -1,4 +1,6 @@
 import type {
+  AdminSessionResponse,
+  AdminStateResponse,
   CreateNoteRequest,
   ListNotesResponse,
   Note,
@@ -20,6 +22,15 @@ export interface GatewayClient {
     query: string,
   ): Promise<SearchResponse>;
   notes(userId: number, projectId: string): Promise<Note[]>;
+  requestAccess(userId: number, displayName: string): Promise<void>;
+  openAdminSession(userId: number, secret: string): Promise<AdminSessionResponse>;
+  adminState(userId: number): Promise<AdminStateResponse>;
+  decideRequest(userId: number, target: number, approve: boolean): Promise<void>;
+  setUserProjects(
+    userId: number,
+    target: number,
+    projectIds: string[] | null,
+  ): Promise<void>;
   /**
    * Files a note. Note the arguments: what to say, never where it goes. The
    * gateway derives the destination, so there is nothing here for the bot to
@@ -68,7 +79,7 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     userId: number,
     body?: unknown,
@@ -103,6 +114,10 @@ export class HttpGatewayClient implements GatewayClient {
       throw new GatewayError("unavailable", `gateway said ${response.status}`);
     }
 
+    // 204 and 202 carry no body; asking for JSON would throw on success.
+    if (response.status === 204 || response.headers.get("content-length") === "0") {
+      return undefined as T;
+    }
     return (await response.json()) as T;
   }
 
@@ -139,5 +154,42 @@ export class HttpGatewayClient implements GatewayClient {
       userId,
       note,
     );
+  }
+
+  async requestAccess(userId: number, displayName: string): Promise<void> {
+    await this.request<void>("POST", "/access-requests", userId, { displayName });
+  }
+
+  async openAdminSession(
+    userId: number,
+    secret: string,
+  ): Promise<AdminSessionResponse> {
+    return this.request<AdminSessionResponse>("POST", "/admin/session", userId, {
+      secret,
+    });
+  }
+
+  async adminState(userId: number): Promise<AdminStateResponse> {
+    return this.request<AdminStateResponse>("GET", "/admin/state", userId);
+  }
+
+  async decideRequest(
+    userId: number,
+    target: number,
+    approve: boolean,
+  ): Promise<void> {
+    await this.request<void>("POST", `/admin/requests/${target}`, userId, {
+      approve,
+    });
+  }
+
+  async setUserProjects(
+    userId: number,
+    target: number,
+    projectIds: string[] | null,
+  ): Promise<void> {
+    await this.request<void>("PUT", `/admin/users/${target}/projects`, userId, {
+      projectIds,
+    });
   }
 }

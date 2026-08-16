@@ -25,6 +25,11 @@ export type GatewayConfig = {
    * and no prose is composed. The bot degrades rather than fails.
    */
   model: ModelConfig | undefined;
+  /**
+   * Absent means no admin surface exists at all — not even a locked one. Set
+   * ADMIN_SECRET to enable it.
+   */
+  admin: { secret: string; ttlMs: number } | undefined;
 };
 
 class ConfigError extends Error {}
@@ -122,6 +127,22 @@ function loadModel(): ModelConfig | undefined {
   };
 }
 
+function loadAdmin(): { secret: string; ttlMs: number } | undefined {
+  const secret = process.env["ADMIN_SECRET"];
+  if (secret === undefined || secret === "") return undefined;
+
+  // Short enough that a forgotten open session closes itself, long enough to
+  // work through a queue of requests without re-entering the secret.
+  const ttlMs = Number(optional("ADMIN_SESSION_TTL_MS", "900000"));
+  if (!Number.isInteger(ttlMs) || ttlMs <= 0) {
+    throw new ConfigError(`ADMIN_SESSION_TTL_MS is not valid: ${ttlMs}`);
+  }
+  if (secret.length < 16) {
+    throw new ConfigError("ADMIN_SECRET must be at least 16 characters");
+  }
+  return { secret, ttlMs };
+}
+
 export function loadConfig(): GatewayConfig {
   const port = Number(optional("GATEWAY_PORT", "8787"));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -134,5 +155,6 @@ export function loadConfig(): GatewayConfig {
     statePath: optional("STATE_DB_PATH", "./data/state.sqlite"),
     palace: loadPalace(),
     model: loadModel(),
+    admin: loadAdmin(),
   };
 }

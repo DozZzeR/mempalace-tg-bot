@@ -88,6 +88,33 @@ export type ListNotesResponse = {
   notes: Note[];
 };
 
+/** Someone who asked for access and is waiting on an admin. */
+export type AccessRequest = {
+  telegramUserId: number;
+  displayName: string;
+  requestedAt: string;
+};
+
+export type AdminUser = {
+  telegramUserId: number;
+  displayName: string;
+  isAdmin: boolean;
+  /** False means they see the whole registry. */
+  restricted: boolean;
+  projectIds: string[];
+};
+
+export type AdminStateResponse = {
+  requests: AccessRequest[];
+  users: AdminUser[];
+  projects: Project[];
+};
+
+export type AdminSessionResponse = {
+  /** ISO timestamp after which admin actions stop working. */
+  expiresAt: string;
+};
+
 export type ErrorResponse = {
   error: string;
   /**

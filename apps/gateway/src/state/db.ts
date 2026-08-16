@@ -38,6 +38,25 @@ CREATE TABLE IF NOT EXISTS user_projects (
   FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id) ON DELETE CASCADE,
   FOREIGN KEY (project_id)       REFERENCES projects(id)            ON DELETE CASCADE
 );
+
+-- Someone who tried to use the bot without being admitted. Kept after a
+-- decision rather than deleted, so a denial is a record and not an absence:
+-- otherwise a denied person reappears as a fresh request every time they try.
+CREATE TABLE IF NOT EXISTS access_requests (
+  telegram_user_id INTEGER PRIMARY KEY,
+  display_name     TEXT    NOT NULL DEFAULT '',
+  requested_at     TEXT    NOT NULL,
+  decided_at       TEXT,
+  status           TEXT    NOT NULL DEFAULT 'pending'
+);
+
+-- Admin powers are not ambient. An admin opens a session with a secret and it
+-- expires; approving someone is then a deliberate act inside a window, not
+-- something the account can do at any moment by tapping a button.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  telegram_user_id INTEGER PRIMARY KEY,
+  expires_at       TEXT    NOT NULL
+);
 `;
 
 export function openDatabase(path: string): Database {
