@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ModelUnavailableError, type ModelPort, type ModelRequest } from "./port.ts";
+import { Semaphore } from "./semaphore.ts";
 
 /**
  * Codex CLI as a reasoning layer. Adapted from the provider in DozerClaw, which
@@ -55,18 +56,15 @@ const MAX_DIAGNOSTIC_BYTES = 8192;
 
 export class CodexModel implements ModelPort {
   readonly #options: CodexOptions;
-  readonly #maxConcurrency: number;
-  #active = 0;
-  readonly #waiting: Array<() => void> = [];
+  readonly #slots: Semaphore;
 
   constructor(options: CodexOptions) {
     this.#options = options;
-    this.#maxConcurrency = Math.max(1, options.maxConcurrency ?? 1);
+    this.#slots = new Semaphore(options.maxConcurrency ?? 1);
   }
 
   async runStructured<T>(request: ModelRequest): Promise<T> {
-    await this.#acquire();
-    try {
+    return this.#slots.run(async () => {
       const attempts = 1 + Math.max(0, this.#options.retries ?? 1);
       let last: unknown;
 
@@ -81,9 +79,7 @@ export class CodexModel implements ModelPort {
         }
       }
       throw last;
-    } finally {
-      this.#release();
-    }
+    });
   }
 
   async #run(request: ModelRequest): Promise<string> {
@@ -232,19 +228,6 @@ export class CodexModel implements ModelPort {
     });
   }
 
-  async #acquire(): Promise<void> {
-    if (this.#active < this.#maxConcurrency) {
-      this.#active += 1;
-      return;
-    }
-    await new Promise<void>((resolve) => this.#waiting.push(resolve));
-    this.#active += 1;
-  }
-
-  #release(): void {
-    this.#active -= 1;
-    this.#waiting.shift()?.();
-  }
 }
 
 /** Copies only the named variables through to the child process. */

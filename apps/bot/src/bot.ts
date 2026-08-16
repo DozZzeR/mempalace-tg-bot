@@ -1,4 +1,5 @@
 import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "grammy";
+import { sequentialize } from "@grammyjs/runner";
 import type {
   AccessRequest,
   AdminUser,
@@ -126,6 +127,23 @@ export type BotDeps = {
 export function buildBot(deps: BotDeps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.token);
 
+  /**
+   * Concurrency, and why both halves are needed.
+   *
+   * grammY's built-in polling handles updates strictly one at a time — its own
+   * source says "handle updates sequentially (!)". A search takes half a minute
+   * because a model runs, so with the built-in loop one person's question
+   * freezes the bot for everybody else, including /start.
+   *
+   * The runner (wired in index.ts) processes updates concurrently. That alone
+   * would introduce the opposite problem: two updates from the SAME chat could
+   * interleave around the session read-modify-write, so tapping "записать" and
+   * then sending the text could race and lose the pending state.
+   *
+   * sequentialize by chat id gives both properties: different people never wait
+   * on each other, and one person's updates stay in order.
+   */
+  bot.use(sequentialize((ctx) => ctx.chat?.id.toString()));
   bot.use(session({ initial: freshSession }));
 
   async function showProjects(ctx: BotContext, edit: boolean): Promise<void> {

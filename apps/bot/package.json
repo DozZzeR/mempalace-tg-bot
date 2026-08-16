@@ -8,6 +8,7 @@
     "start": "node --env-file-if-exists=../../.env src/index.ts"
   },
   "dependencies": {
+    "@grammyjs/runner": "^2.0.3",
     "@mempalace-bot/contract": "*",
     "grammy": "^1.32.0"
   }
