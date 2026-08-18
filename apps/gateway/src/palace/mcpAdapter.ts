@@ -132,20 +132,38 @@ export class McpPalaceAdapter implements PalaceAdapter {
       limit,
     });
 
-    return readArray(payload, "drawers")
+    const ids = readArray(payload, "drawers")
       .filter(
         (entry) =>
           readString(entry, "wing") === address.wing &&
           readString(entry, "room") === address.room,
       )
-      .map((entry) => ({
-        key: readString(entry, "drawer_id") ?? "",
-        text:
-          readString(entry, "content") ??
-          readString(entry, "content_preview") ??
-          "",
-      }))
-      .filter((entry) => entry.key !== "");
+      .map((entry) => readString(entry, "drawer_id") ?? "")
+      .filter((id) => id !== "");
+
+    // The listing carries content_preview, which is truncated — reading notes
+    // from it silently cut every long one down to its first couple of lines.
+    // The full text has to be fetched per drawer.
+    //
+    // A long note is stored as several chunks that list as separate entries, so
+    // they are grouped by the id they share and rejoined in chunk order.
+    const groups = groupChunks(ids);
+
+    const notes: Array<{ key: string; text: string }> = [];
+    for (const [base, chunkIds] of groups) {
+      const parts = await Promise.all(chunkIds.map((id) => this.#content(id)));
+      const text = parts.join("");
+      if (text !== "") notes.push({ key: base, text });
+    }
+    return notes;
+  }
+
+  /** Full stored text of one drawer, empty when it cannot be read. */
+  async #content(drawerId: string): Promise<string> {
+    const payload = await this.call("mempalace_get_drawer", {
+      drawer_id: drawerId,
+    });
+    return readString(payload, "content") ?? readString(payload, "text") ?? "";
   }
 
   async listWings(): Promise<string[]> {
@@ -160,6 +178,27 @@ export class McpPalaceAdapter implements PalaceAdapter {
     await this.client?.close();
     this.client = undefined;
   }
+}
+
+/**
+ * Groups drawer ids by the drawer they belong to, chunks in order.
+ *
+ * MemPalace splits a long drawer into `<id>_chunk_000000`, `_chunk_000001` and
+ * lists each as its own entry. Rejoining them is what makes a long note come
+ * back whole; ordering matters because the split can fall mid-word.
+ */
+export function groupChunks(ids: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+
+  for (const id of ids) {
+    const base = id.replace(/_chunk_\d+$/, "");
+    const bucket = groups.get(base);
+    if (bucket === undefined) groups.set(base, [id]);
+    else bucket.push(id);
+  }
+
+  for (const [, chunkIds] of groups) chunkIds.sort();
+  return groups;
 }
 
 /**
