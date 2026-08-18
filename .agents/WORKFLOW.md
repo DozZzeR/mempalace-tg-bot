@@ -252,6 +252,21 @@ need exact full content. `hall="code"` is the read-only mined codebase structure
 `wing="mempalace_bot"` and a concise lowercase_underscore room name, in English.
 No transient logs, no secrets, no guesses; check for duplicates first.
 
+**`hall="human"` is READ-ONLY to models — never modify it.** Drawers with
+`hall="human"` (equivalently `added_by="tg_bot"`, the human room `notes`, body
+starting with `MemPalace Bot note` + a `kind:` line such as `plan`) are the
+owner's own hand-filed notes — product ideas, plans, todos. This is the very
+`human` hall this bot exposes (R-8/R-9): people write it, models don't. A model
+may **read and cite** it, but must **never** `mempalace_update_drawer`,
+overwrite, delete, or "consolidate" it, and must not fold it into any dedupe —
+in `wing="mempalace_bot"` or in **any** project wing the gateway serves. Not
+auto-surfaced by semantic search (short, keyword-poor), so find by structure:
+`mempalace_list_drawers wing=<project> room=notes` (or filter on `hall="human"`).
+When planning or orienting, **list `room=notes` and, if a note resonates with the
+work in play, surface it to the owner** as a suggestion, not an instruction to
+execute; judge relevance yourself over the full (small) listed set. Turn a note
+into action only when the owner asks.
+
 Rooms worth seeding: `project_overview`, `decisions`, `open_questions`,
 `gateway_contract`, `access_model`, `human_room_key`, `constraints_blockers`,
 `conventions`.
