@@ -94,6 +94,13 @@ export function projectEnteredView(project: Project): View {
   };
 }
 
+/** How much of a note the list shows before it needs opening. */
+const LIST_CLIP = 300;
+/** Notes listed at once. Older ones stay reachable through the palace. */
+const MAX_LISTED_NOTES = 10;
+/** Telegram caps a message at 4096; leave room for the header and escaping. */
+const FULL_NOTE_LIMIT = 3500;
+
 const KIND_LABEL: Record<NoteKind, string> = {
   thought: "мысль",
   plan: "план",
@@ -160,21 +167,20 @@ export function noteSavedView(note: Note): View {
 }
 
 export function notesListView(notes: Note[], readerId?: number): View {
-  const buttons: Button[][] = [
-    [{ text: "✍ Записать", data: "note" }],
-    [{ text: "← К списку проектов", data: "back" }],
-  ];
-
   if (notes.length === 0) {
     return {
       text: "В этом проекте ещё никто ничего не записал. Будете первым?",
-      buttons,
+      buttons: [
+        [{ text: "✍ Записать", data: "note" }],
+        [{ text: "← К списку проектов", data: "back" }],
+      ],
     };
   }
 
-  const body = notes
-    .slice(0, 10)
-    .map((note) => {
+  const shown = notes.slice(0, MAX_LISTED_NOTES);
+
+  const body = shown
+    .map((note, index) => {
       const date = note.createdAt.slice(0, 10);
       const who = escapeHtml(note.authorName);
       const head = date === "" ? who : `${who} · ${date}`;
@@ -183,12 +189,70 @@ export function notesListView(notes: Note[], readerId?: number): View {
       const mine =
         note.kind === "message" && readerId !== undefined && note.to === readerId;
       const mark = mine ? "📬 <b>вам</b> — " : "";
-      return `${mark}<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}\n${escapeHtml(clip(note.text, 400))}`;
+      const text = escapeHtml(clip(note.text, LIST_CLIP));
+      const more = note.text.length > LIST_CLIP ? ` <i>…ещё ${note.text.length - LIST_CLIP} симв.</i>` : "";
+      return `${index + 1}. ${mark}<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}
+${text}${more}`;
     })
     .join("\n\n");
 
-  return { text: body, buttons };
+  // Numbers rather than titles: ten rows of prose-shaped buttons would bury the
+  // list they belong to, and the numbering is already in the text above.
+  const openers: Button[][] = [];
+  for (let i = 0; i < shown.length; i += 5) {
+    openers.push(
+      shown.slice(i, i + 5).map((_, j) => ({
+        text: String(i + j + 1),
+        data: `open-note:${i + j}`,
+      })),
+    );
+  }
+
+  const truncated =
+    notes.length > shown.length
+      ? `
+
+<i>Показаны последние ${shown.length} из ${notes.length}.</i>`
+      : "";
+
+  return {
+    text: `${body}${truncated}`,
+    buttons: [
+      ...openers,
+      [{ text: "✍ Записать", data: "note" }],
+      [{ text: "← К списку проектов", data: "back" }],
+    ],
+  };
 }
+
+/**
+ * One note in full.
+ *
+ * The list shows a clipped version on purpose — ten notes at full length is a
+ * wall nobody reads. This is the other half of that choice: the whole text,
+ * once asked for.
+ */
+export function noteView(note: Note, index: number): View {
+  const date = note.createdAt.slice(0, 16).replace("T", " ");
+  const author = escapeHtml(note.authorName || "неизвестно");
+  const body = escapeHtml(clip(note.text, FULL_NOTE_LIMIT));
+  const cut =
+    note.text.length > FULL_NOTE_LIMIT
+      ? "\n\n<i>Запись длиннее, чем помещается в одно сообщение.</i>"
+      : "";
+
+  return {
+    text:
+      `<b>${escapeHtml(KIND_LABEL[note.kind])}</b> №${index + 1}
+` +
+      `<i>${author}${date === "" ? "" : ` · ${date}`}</i>
+
+` +
+      `${body}${cut}`,
+    buttons: [[{ text: "← К записям", data: "notes" }]],
+  };
+}
+
 
 function clip(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;

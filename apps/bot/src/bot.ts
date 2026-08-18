@@ -12,6 +12,7 @@ import type {
   AdminUser,
   AdminWing,
   Member,
+  Note,
   NoteKind,
   Project,
 } from "@mempalace-bot/contract";
@@ -34,6 +35,7 @@ import {
   sourcesView,
   notePromptView,
   noteSavedView,
+  noteView,
   notesListView,
   projectEnteredView,
   projectListView,
@@ -92,6 +94,8 @@ type SessionData = {
   answerMessageId: number | undefined;
   /** The message showing the passages, which paging may rewrite. */
   sourcesMessageId: number | undefined;
+  /** The notes last listed; open-note indices resolve against these. */
+  listedNotes: Note[];
 };
 
 type BotContext = Context & SessionFlavor<SessionData>;
@@ -114,6 +118,7 @@ function freshSession(): SessionData {
     hintMessageId: undefined,
     answerMessageId: undefined,
     sourcesMessageId: undefined,
+    listedNotes: [],
   };
 }
 
@@ -634,6 +639,24 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     await render(ctx, view, true);
   });
 
+  bot.callbackQuery(/^open-note:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+
+    // Index into the list this message was built from. The list is refetched
+    // whenever it is shown, so an index can only ever address something the
+    // person was just looking at.
+    const index = Number(ctx.match?.[1]);
+    const note = ctx.session.listedNotes[index];
+    if (note === undefined) {
+      await ctx.reply("Список устарел. Откройте записи заново.");
+      return;
+    }
+
+    // Edited in place, unlike an answer: the list is a menu and refetching it
+    // costs one request, so there is nothing here worth preserving.
+    await render(ctx, noteView(note, index), true);
+  });
+
   bot.callbackQuery("note", async (ctx) => {
     await ctx.answerCallbackQuery();
     const projectId = ctx.session.currentProjectId;
@@ -711,11 +734,9 @@ export function buildBot(deps: BotDeps): Bot<BotContext> {
     }
 
     try {
-      const view = notesListView(
-        await deps.gateway.notes(userId, projectId),
-        userId,
-      );
-      await render(ctx, view, true);
+      const notes = await deps.gateway.notes(userId, projectId);
+      ctx.session.listedNotes = notes;
+      await render(ctx, notesListView(notes, userId), true);
     } catch (error) {
       await ctx.reply(excuse(error));
     }
