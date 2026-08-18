@@ -13,40 +13,35 @@ The product: a Telegram bot that gives **people** a window into MemPalace —
 
 Everything the bot touches is read-only except that one segregated write target.
 
-## READ FIRST — nothing is built yet
+## READ FIRST — it is built, deployed, and in use
 
-State as of **16 August 2026**:
+State as of **18 August 2026**:
 
-- `repo/` **is the git root**, branch `main`, remote
+- `repo/` is the git root, branch `main`, remote
   `git@github.com:DozZzeR/mempalace-tg-bot.git`. `docs/` stays outside it, so
-  `docs/PROJECT.md` is not on GitHub;
-- fifteen decisions are settled (below); one material question remains open
-  (D-5, model synthesis) and is tracked in `../docs/PROJECT.md`;
-- **the bot is deployed and running** on Hetzner at `~/projects/mempalace-bot`
-  under PM2 as `mempalace-gateway` and `mempalace-bot`. See `deploy/README.md`;
-  deploying is `deploy/deploy.sh`, rolling back is `deploy/rollback.sh <sha>`;
-- **M0 and M1 are complete in code**: monorepo and tooling; the gateway with all
-  three access cuts, its routes, the SQLite state store and the MCP palace
-  adapter. `npm run check` is green, 15 tests;
-- **one thing blocks M1 from being finished outright**: the palace credential.
-  The developer's MCP token is full-access — it can see the family wing — so the
-  gateway must not reuse it, and the adapter has never been run against the live
-  palace. `PALACE_AUTHORIZATION` is required with no default until the owner
-  provisions a narrowed credential. Do not work around this by borrowing the
-  developer's token;
-- **M2 is the current milestone** — the bot showing project buttons and answers;
-- the brief in `../docs/PROJECT.md` is the human-facing map of the project. Read
-  it before proposing anything about scope or architecture.
+  `docs/PROJECT.md` is not on GitHub — do not link to it from files that are.
+- **All six milestones M0–M5 are done and every original open question is
+  closed.** The bot is live and people use it. 188 tests; `npm run check` is
+  the gate.
+- **Deployed** on Hetzner at `~/projects/mempalace_bot_project/bot`, under PM2
+  as `mempalace-gateway` and `mempalace-bot`. Beside it, `../model` is Codex's
+  working directory and must stay empty — see `deploy/README.md` for why a
+  sibling and not a subfolder.
+- The gateway reaches the palace over **loopback**, so no credential leaves the
+  machine and nothing crosses the network.
 
-Two rules follow, and they hold until the user says otherwise:
+Working rules, until the owner says otherwise:
 
-1. **Do not build ahead of the open questions.** Each remaining one is settled
-   inside the milestone that needs it: D-2 (palace transport) in M1, D-7
-   (polling vs webhook) in M4, D-5 (model synthesis) in M5. Do not pre-empt them
-   from an earlier milestone.
-2. **Never present a proposal as a decision.** The settled decisions are the ten
-   in the table below. Everything else — the contract sketch in particular — is
-   proposed. Say "proposed", not "the system uses".
+1. **This is running software.** Changes reach real people on the next deploy.
+   Verify against the live system, not only against `FakePalace` — several real
+   defects (notes read back truncated, publishing that never worked) were
+   invisible to the fakes and obvious the moment a person used the bot.
+2. **Never present a proposal as a decision.** The settled decisions are the
+   twenty-one in the table below. Anything absent from it is proposed.
+3. **One operation, one implementation.** The bot and the CLI both reach the
+   registry, and every time the two drifted it produced a defect — an unfiltered
+   grant, a mismatched project id, a misleading report. If a change touches
+   something reachable from both, change the shared code, not one door.
 
 ## Settled decisions
 
@@ -68,6 +63,11 @@ Two rules follow, and they hold until the user says otherwise:
 | R-14 | Processes run under **PM2**, not systemd — the box already boots PM2 and has `pm2-logrotate`; a second supervisor is a second place to look when something is down |
 | R-15 | The Node path in the PM2 config is **absolute**. Three versions exist on the box, a non-interactive shell picks v18, and only v25 has `node:sqlite` unflagged |
 | R-16 | The gateway reaches the palace over **loopback** at `127.0.0.1:4118` (`mem-palace-common-http`). Nothing crosses the network and no credential leaves the machine |
+| R-17 | **The model plans the search and composes the answer** (closes D-5). The palace stores English and people ask in other languages, so translation is needed before the search, not only after. The model gets **no tools**: it returns strings and this code decides what to do with them |
+| R-18 | **Admins come from `ADMIN_IDS`**, not from a database row. Nothing reachable at runtime can promote an account, and a fresh database still has an owner |
+| R-19 | The admin unlock is a **memorable phrase stored as a scrypt hash**, not a random secret. A phrase carries less entropy, which is exactly why the stored form must cost something to guess |
+| R-20 | The bot runs on the **grammY runner with `sequentialize` by chat id**. The built-in poller handles updates one at a time, so a single half-minute search froze the bot for everyone |
+| R-21 | **Per-user rate limits**: a token bucket over time, plus an in-flight guard refusing a second concurrent search. Model runs are serialised, so a retype would lengthen the wait it was meant to shorten |
 
 ### Access model — three independent cuts
 

@@ -94,10 +94,8 @@ export function projectEnteredView(project: Project): View {
   };
 }
 
-/** How much of a note the list shows before it needs opening. */
-const LIST_CLIP = 300;
-/** Notes listed at once. Older ones stay reachable through the palace. */
-const MAX_LISTED_NOTES = 10;
+/** How much of one message the notes list may fill; Telegram caps it at 4096. */
+const LIST_BUDGET = 3600;
 /** Telegram caps a message at 4096; leave room for the header and escaping. */
 const FULL_NOTE_LIMIT = 3500;
 
@@ -167,92 +165,56 @@ export function noteSavedView(note: Note): View {
 }
 
 export function notesListView(notes: Note[], readerId?: number): View {
+  const buttons: Button[][] = [
+    [{ text: "✍ Записать", data: "note" }],
+    [{ text: "← К списку проектов", data: "back" }],
+  ];
+
   if (notes.length === 0) {
     return {
       text: "В этом проекте ещё никто ничего не записал. Будете первым?",
-      buttons: [
-        [{ text: "✍ Записать", data: "note" }],
-        [{ text: "← К списку проектов", data: "back" }],
-      ],
+      buttons,
     };
   }
 
-  const shown = notes.slice(0, MAX_LISTED_NOTES);
+  // Each note goes in an expandable blockquote: Telegram collapses anything
+  // long to a few lines and offers its own "expand" in place. That beats a
+  // button — no round trip, nothing to go stale, and no per-note state to keep.
+  // Short notes render whole, with no toggle to notice.
+  const blocks: string[] = [];
+  let used = 0;
+  let shown = 0;
 
-  const body = shown
-    .map((note, index) => {
-      const date = note.createdAt.slice(0, 10);
-      const who = escapeHtml(note.authorName);
-      const head = date === "" ? who : `${who} · ${date}`;
-      // A message addressed to the reader is the one thing in this list they
-      // must not scroll past, so it is marked rather than left to be spotted.
-      const mine =
-        note.kind === "message" && readerId !== undefined && note.to === readerId;
-      const mark = mine ? "📬 <b>вам</b> — " : "";
-      const text = escapeHtml(clip(note.text, LIST_CLIP));
-      const more = note.text.length > LIST_CLIP ? ` <i>…ещё ${note.text.length - LIST_CLIP} симв.</i>` : "";
-      return `${index + 1}. ${mark}<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}
-${text}${more}`;
-    })
-    .join("\n\n");
+  for (const note of notes) {
+    const date = note.createdAt.slice(0, 10);
+    const who = escapeHtml(note.authorName || "неизвестно");
+    const head = date === "" ? who : `${who} · ${date}`;
+    // A message addressed to the reader is the one thing in this list they
+    // must not scroll past, so it is marked rather than left to be spotted.
+    const mine =
+      note.kind === "message" && readerId !== undefined && note.to === readerId;
+    const mark = mine ? "📬 <b>вам</b> — " : "";
 
-  // Numbers rather than titles: ten rows of prose-shaped buttons would bury the
-  // list they belong to, and the numbering is already in the text above.
-  const openers: Button[][] = [];
-  for (let i = 0; i < shown.length; i += 5) {
-    openers.push(
-      shown.slice(i, i + 5).map((_, j) => ({
-        text: String(i + j + 1),
-        data: `open-note:${i + j}`,
-      })),
-    );
+    const body = escapeHtml(clip(note.text, FULL_NOTE_LIMIT));
+    const block =
+      `${mark}<b>${escapeHtml(KIND_LABEL[note.kind])}</b> — ${head}\n` +
+      `<blockquote expandable>${body}</blockquote>`;
+
+    // The whole list is one message, and Telegram caps that. Fitting fewer
+    // notes in full beats showing more of them mangled.
+    if (used + block.length > LIST_BUDGET && shown > 0) break;
+    blocks.push(block);
+    used += block.length;
+    shown += 1;
   }
 
-  const truncated =
-    notes.length > shown.length
-      ? `
-
-<i>Показаны последние ${shown.length} из ${notes.length}.</i>`
+  const omitted =
+    notes.length > shown
+      ? `\n\n<i>Показаны последние ${shown} из ${notes.length}.</i>`
       : "";
 
-  return {
-    text: `${body}${truncated}`,
-    buttons: [
-      ...openers,
-      [{ text: "✍ Записать", data: "note" }],
-      [{ text: "← К списку проектов", data: "back" }],
-    ],
-  };
+  return { text: `${blocks.join("\n\n")}${omitted}`, buttons };
 }
-
-/**
- * One note in full.
- *
- * The list shows a clipped version on purpose — ten notes at full length is a
- * wall nobody reads. This is the other half of that choice: the whole text,
- * once asked for.
- */
-export function noteView(note: Note, index: number): View {
-  const date = note.createdAt.slice(0, 16).replace("T", " ");
-  const author = escapeHtml(note.authorName || "неизвестно");
-  const body = escapeHtml(clip(note.text, FULL_NOTE_LIMIT));
-  const cut =
-    note.text.length > FULL_NOTE_LIMIT
-      ? "\n\n<i>Запись длиннее, чем помещается в одно сообщение.</i>"
-      : "";
-
-  return {
-    text:
-      `<b>${escapeHtml(KIND_LABEL[note.kind])}</b> №${index + 1}
-` +
-      `<i>${author}${date === "" ? "" : ` · ${date}`}</i>
-
-` +
-      `${body}${cut}`,
-    buttons: [[{ text: "← К записям", data: "notes" }]],
-  };
-}
-
 
 function clip(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;
